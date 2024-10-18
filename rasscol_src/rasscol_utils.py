@@ -1,24 +1,29 @@
 # rasscol_utils.py
 
 # local modules
-from general_utils_v1 import *
+from rasscol_src.general_utils import *
 
 # buitlins
 from itertools import product
 from multiprocessing import Pool, Lock
 from pathlib import Path
-import subprocess, csv, logging, math
+import subprocess, csv, logging, math, re
 
 # third party modules
 import vina
 
-def calc_bondi_vol(atom_counts:dict, num_rings:int, num_aromatic_rings:int) -> float:
+def calc_bondi_vol(molecular_formula:str, num_rings:int, num_aromatic_rings:int) -> float:
     """
     https://pubs.acs.org/doi/10.1021/jo034808o
     Rg = total rings
     RA = aromatic rings 
     RNA = non aromatic rings
     """
+    
+    elements = re.findall('[A-Z]', molecular_formula)
+    element_counts = re.findall('\d+', molecular_formula)
+
+    atom_counts = {k:int(v) for k,v in zip(elements, element_counts)}
     
     bondi_vol = {'H':7.24, 'C':20.58, 'N':15.6, 'O':14.71, 'F': 13.31, 'Cl':22.54, 'Br':26.52, 'I':32.52, 'P':24.43, 'S': 24.43, 'As':26.52, 'B':40.48, 'Si':38.79, 'Se':28.73, 'Te':36.62}
     
@@ -345,9 +350,9 @@ class RASSCoL:
             results = [row for row in reader]
 
         # Sort the results based on the 'vina_score_norm' column and get the top N
-        top_n = sorted(results, key=lambda x: float(x['vina_score_norm']))[:config['run']['save_top_n']]
+        top_n = results[:config['run']['save_top_n']]
 
         # Iterate through the top N and call pack_and_dock
         for row in top_n:
-            self.pack_and_dock(row['id'], row['seq'], config['run']['receptor_path'], config['run']['ligand_path'], config['design']['pocket_ca_centroid'], config['run']['output_directory'], config['run']['cube_side_length'], save=True)
+            self.pack_and_dock(row['id'], row['seq'], Path(config['run']['receptor_path']), Path(config['run']['ligand_path']), config['run']['pocket_ca_centroid'], Path(config['run']['output_directory']), config['run']['cube_side_length'], save=True)
             print(f"Saved design {row['id']} at {config['run']['output_directory']}/{row['id']}_{Path(config['run']['ligand_path']).stem}.pdbqt")

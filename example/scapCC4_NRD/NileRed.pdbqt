@@ -1,0 +1,43 @@
+REMARK  Name = NileRed 
+REMARK  5 active torsions:
+REMARK  status: ('A' for Active; 'I' for Inactive)
+REMARK    1  A    between atoms: C_1  and  C_2
+REMARK    2  A    between atoms: C_2  and  N_3
+REMARK    3  A    between atoms: N_3  and  C_4
+REMARK    4  A    between atoms: N_3  and  C_6
+REMARK    5  A    between atoms: C_4  and  C_5
+REMARK                            x       y       z     vdW  Elec       q    Type
+REMARK                         _______ _______ _______ _____ _____    ______ ____
+ROOT
+ATOM      1  C   NRD     1       4.368  -0.557   1.548  0.00  0.00    +0.000 A 
+ATOM      2  C   NRD     1       4.953  -1.701   2.125  0.00  0.00    +0.000 A 
+ATOM      3  C   NRD     1       6.337  -1.786   2.349  0.00  0.00    +0.000 A 
+ATOM      4  C   NRD     1       7.186  -0.729   2.019  0.00  0.00    +0.000 A 
+ATOM      5  C   NRD     1       6.626   0.413   1.459  0.00  0.00    +0.000 A 
+ATOM      6  C   NRD     1       5.244   0.494   1.224  0.00  0.00    +0.000 A 
+ATOM      7  N   NRD     1       8.572  -0.774   2.234  0.00  0.00    +0.000 NA
+ATOM      8  C   NRD     1       9.049  -1.862   2.759  0.00  0.00    +0.000 A 
+ATOM      9  C   NRD     1      10.503  -1.978   3.022  0.00  0.00    +0.000 A 
+ATOM     10  C   NRD     1      11.357  -0.910   2.708  0.00  0.00    +0.000 A 
+ATOM     11  C   NRD     1      12.728  -1.007   2.953  0.00  0.00    +0.000 A 
+ATOM     12  C   NRD     1      13.255  -2.170   3.511  0.00  0.00    +0.000 A 
+ATOM     13  C   NRD     1      12.412  -3.237   3.824  0.00  0.00    +0.000 A 
+ATOM     14  C   NRD     1      11.030  -3.140   3.580  0.00  0.00    +0.000 A 
+ATOM     15  C   NRD     1      10.159  -4.278   3.924  0.00  0.00    +0.000 A 
+ATOM     16  O   NRD     1      10.605  -5.306   4.420  0.00  0.00    +0.000 OA
+ATOM     17  C   NRD     1       8.714  -4.136   3.660  0.00  0.00    +0.000 A 
+ATOM     18  C   NRD     1       8.189  -3.024   3.122  0.00  0.00    +0.000 A 
+ATOM     19  O   NRD     1       6.818  -2.954   2.901  0.00  0.00    +0.000 OA
+ENDROOT
+BRANCH   1  20
+ATOM     20  N   NRD     1       2.975  -0.470   1.307  0.00  0.00    +0.000 N 
+BRANCH  20  22
+ATOM     21  C   NRD     1       1.122   0.242  -0.345  0.00  0.00    +0.000 C 
+ATOM     22  C   NRD     1       2.590   0.111   0.006  0.00  0.00    +0.000 C 
+ENDBRANCH  20  22
+BRANCH  20  23
+ATOM     23  C   NRD     1       2.109  -0.939   2.406  0.00  0.00    +0.000 C 
+ATOM     24  C   NRD     1       0.603  -0.853   2.251  0.00  0.00    +0.000 C 
+ENDBRANCH  20  23
+ENDBRANCH   1  20
+TORSDOF 3

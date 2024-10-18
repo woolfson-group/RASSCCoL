@@ -9,13 +9,7 @@ This code requires a small number of external libraries (see `env/RASSCoL_env.ym
 To set up the environment, run:
 
 ```bash
-conda env create -f env/RASSCol_env.yml
+conda env create -f env/RASSCoL_env.yml
 ```
 
-Then to make the environment visible in the Jupyter Notebook install `ipykernel`:
-
-```bash
-pip install ipykernel==6.19.2
-```
-
-At this point you should be good to interact with the example notebooks (found in `notebooks` directory).
+Then you should be good to interact with the example notebooks (found in `notebooks` directory).

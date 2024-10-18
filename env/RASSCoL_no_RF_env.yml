@@ -1,12 +1,11 @@
-name: RASSCoL_env             
+name: RASSCoL_no_RF_env        
 channels:
   - conda-forge               
   - defaults                  
 dependencies:
-  - python=3.9.18             
-  - pip                       
+  - python=3.9.18                     
   - pip:      
-      - vina=1.2.5            
+      - vina==1.2.5            
       - rdkit==2023.09.3
       - py3Dmol==2.0.4
       - ipykernel==6.19.2

@@ -25,10 +25,10 @@ def pdb2seq(pdb_path: str) -> dict:
             if ' CA ' in line:  # Check if the line represents an alpha carbon atom.
                 
                 # Extract the chain identifier.
-                chain = line[22]
+                chain = line[21]
                 
                 # Extract and format the residue name.
-                residue = line[18:20].strip().title()  
+                residue = line[17:20].strip().title()  
                 
                 # Ensure a key for the chain exists.
                 sequences.setdefault(chain, '')  
@@ -69,10 +69,8 @@ def get_mol_len(coords:list) -> float:
             if dist > max_distance:
                 
                 max_distance = round(dist,2)
-                start_atom = coords[i]
-                end_atom = coords[j]
             
-    return max_distance, start_atom, end_atom
+    return max_distance
 
 def get_pdbqt_coords(pdbqt_path: str, ca_only:bool=False) -> list:
     """
