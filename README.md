@@ -31,7 +31,7 @@ python run_RASSCoL.py \
     -o ./example/scapCC4_NRD/
 ```
 
-There are several options you can manipulate for RASSCoL, see `### Running options`.
+There are several options you can manipulate for RASSCoL, see [Running options](#running-options).
 
 For help setting up the ligand and the design configuration, see `./01_RASSCoL_ligand_prep.ipynb` and `./02_RASSCoL_design_prep.ipynb` respectively.
 
