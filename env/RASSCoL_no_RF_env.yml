@@ -3,7 +3,8 @@ channels:
   - conda-forge               
   - defaults                  
 dependencies:
-  - python=3.9.18                     
+  - python=3.9.18
+  - pip               
   - pip:      
       - vina==1.2.5            
       - ipykernel==6.19.2

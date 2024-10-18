@@ -7,7 +7,7 @@ from rasscol_src.general_utils import *
 from itertools import product
 from multiprocessing import Pool, Lock
 from pathlib import Path
-import subprocess, csv, logging, math, re
+import subprocess, csv, logging, math, re, sys
 
 # third party modules
 import vina
@@ -160,8 +160,8 @@ class RASSCoL:
         if rm_seq_txt and repack_seq_path.is_file():
             repack_seq_path.unlink()
 
-    def receptor_pdb2pdbqt(self, receptor_pdb_path, receptor_pdbqt_path):
-        obabel_cmd=f'obabel -ipdb {receptor_pdb_path} -opdbqt --addpolarh -xr -O {receptor_pdbqt_path}'
+    def receptor_pdb2pdbqt(self, receptor_pdb_path, receptor_pdbqt_path, obabel_path):
+        obabel_cmd=f'{obabel_path} -ipdb {receptor_pdb_path} -opdbqt --addpolarh -xr -O {receptor_pdbqt_path}'
         subprocess.run(obabel_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
 
     def quick_vina(self,
@@ -201,14 +201,14 @@ class RASSCoL:
         else:
             return math.log10(vina_score)
 
-    def pack_and_dock(self, seq_id, sequence, scaffold, ligand, pocket_centroid, output_dir, cube_side_length, save=False):
+    def pack_and_dock(self, seq_id, sequence, scaffold, ligand, pocket_centroid, output_dir, cube_side_length, config, save=False):
         
         packed_pdb_path = output_dir / f'{seq_id}.pdb'
         packed_pdbqt_path = packed_pdb_path.with_suffix('.pdbqt')
         docked_pdbqt_path = output_dir / f'{packed_pdb_path.stem}_{ligand.stem}.pdbqt'
 
-        self.repack_pdb(scaffold,packed_pdb_path,sequence)
-        self.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path)
+        self.repack_pdb(scaffold,packed_pdb_path,sequence, faspr_path=config['run']['FASPR_path'])
+        self.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path, obabel_path=config['run']['obabel_path'])
         vina_score = self.quick_vina(packed_pdbqt_path, ligand, docked_pdbqt_path, pocket_centroid, cube_side_length)
         
         dock_coords = get_pdbqt_coords(docked_pdbqt_path)
@@ -239,12 +239,17 @@ class RASSCoL:
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.INFO)
         
+        # Create a console handler for logging to STDOUT
+        console_handler = logging.StreamHandler(sys.stdout) 
+        console_handler.setLevel(logging.INFO)
+        
         # Define the logging format
         formatter = logging.Formatter('%(asctime)s - %(processName)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         
-        # Add the file handler to the logger
+        # Add both handlers to the logger
         logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
         
     # Thread-safe CSV writing function
     def write_to_csv(self, file_path, row):
@@ -253,7 +258,7 @@ class RASSCoL:
                 writer = csv.writer(f)
                 writer.writerow(row)
     
-    def vina_worker(self, seq_id, combined_seq, modified_seq, volumes, scaffold, ligand, pocket_centroid, num_lig_atoms, log_file, csv_file, output_dir, cube_side_length):
+    def vina_worker(self, seq_id, combined_seq, modified_seq, volumes, scaffold, ligand, pocket_centroid, num_lig_atoms, log_file, csv_file, output_dir, cube_side_length, config):
         """
         Worker function for docking and data collection.
 
@@ -279,7 +284,7 @@ class RASSCoL:
 
         try:
             # Perform docking and calculations
-            vina_score, dist_from_pocket = self.pack_and_dock(seq_id, modified_seq, scaffold, ligand, pocket_centroid, output_dir, cube_side_length)
+            vina_score, dist_from_pocket = self.pack_and_dock(seq_id, modified_seq, scaffold, ligand, pocket_centroid, output_dir, cube_side_length, config)
             vina_score_norm = round(vina_score / num_lig_atoms, 3)
             
             # Calculate side-chain volumes
@@ -292,7 +297,7 @@ class RASSCoL:
             # Write to CSV file in a thread-safe manner
             self.write_to_csv(csv_file, [seq_id, modified_seq, combined_seq, vina_score, vina_score_norm, dist_from_pocket, total_side_chain_vol, cavity_vol, cavity_lig_frac])
 
-            logging.info(f'Job {seq_id} ({combined_seq}) finished with vina_score (norm): {vina_score} ({vina_score_norm})')
+            logging.info(f'Job {seq_id} ({combined_seq}) finished with vina_score (norm): {round(vina_score,3)} ({vina_score_norm})')
 
         except Exception as e:
             logging.error(f'Error in job {seq_id}: {e}')
@@ -333,7 +338,8 @@ class RASSCoL:
                 log_file,                                # Log file path
                 csv_file,                                # CSV file path
                 output_dir,                              # Output directory
-                config['run']['cube_side_length']        # The cube side length of the docking grid. 
+                config['run']['cube_side_length'],       # The cube side length of the docking grid. 
+                config                                   # Configuration info
             )
             for seq_id in seq_gen
         ]
@@ -354,5 +360,5 @@ class RASSCoL:
 
         # Iterate through the top N and call pack_and_dock
         for row in top_n:
-            self.pack_and_dock(row['id'], row['seq'], Path(config['run']['receptor_path']), Path(config['run']['ligand_path']), config['run']['pocket_ca_centroid'], Path(config['run']['output_directory']), config['run']['cube_side_length'], save=True)
+            self.pack_and_dock(row['id'], row['seq'], Path(config['run']['receptor_path']), Path(config['run']['ligand_path']), config['run']['pocket_ca_centroid'], Path(config['run']['output_directory']), config['run']['cube_side_length'], config=config, save=True)
             print(f"Saved design {row['id']} at {config['run']['output_directory']}/{row['id']}_{Path(config['run']['ligand_path']).stem}.pdbqt")

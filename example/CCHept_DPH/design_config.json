@@ -1,0 +1,29 @@
+{
+    "1": {
+        "res_info": {
+            "2": "AVILFM"
+        },
+        "oligomer": 7,
+        "cavity": 0,
+        "tolerance": 20,
+        "ligand_layer_vol": 89.70666666666666
+    },
+    "2": {
+        "res_info": {
+            "6": "AVILFM"
+        },
+        "oligomer": 7,
+        "cavity": 0,
+        "tolerance": 20,
+        "ligand_layer_vol": 89.70666666666666
+    },
+    "3": {
+        "res_info": {
+            "9": "AVILFM"
+        },
+        "oligomer": 7,
+        "cavity": 0,
+        "tolerance": 20,
+        "ligand_layer_vol": 89.70666666666666
+    }
+}

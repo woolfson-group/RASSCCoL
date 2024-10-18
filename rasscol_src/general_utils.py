@@ -17,12 +17,13 @@ def pdb2seq(pdb_path: str) -> dict:
     }
     
     sequences = dict()
+    residue_numbers = {}
     with open(pdb_path, 'r') as pdb_obj:
         
         # Iterate over each line in the PDB file.
         for line in pdb_obj:
             
-            if ' CA ' in line:  # Check if the line represents an alpha carbon atom.
+            if line.startswith('ATOM') and ' CA ' in line:  # Check if the line represents an alpha carbon atom.
                 
                 # Extract the chain identifier.
                 chain = line[21]
@@ -30,15 +31,26 @@ def pdb2seq(pdb_path: str) -> dict:
                 # Extract and format the residue name.
                 residue = line[17:20].strip().title()  
                 
+                # Extract and format the residue index.
+                residue_number = int(line[22:26].strip())
+                
                 # Ensure a key for the chain exists.
                 sequences.setdefault(chain, '')  
                 
-                # Append the single-letter code for the residue to the sequence.
-                if not residue in list(AAdict.keys()):
-                    print(f'Non-canonical amino acid: {residue}, replacing with X')
-                    sequences[chain] += 'X'
-                else:
-                    sequences[chain] += AAdict[residue]
+                # Ensure a key for the chain exists.
+                residue_numbers.setdefault(chain, [])  
+                
+                # check to see if another residue has already be used for CA
+                # prevents duplicates in sequences when different conformers present
+                if not residue_number in residue_numbers[chain]:
+                    
+                    residue_numbers[chain].append(residue_number)
+                    # Append the single-letter code for the residue to the sequence.
+                    if not residue in list(AAdict.keys()):
+                        print(f'Non-canonical amino acid: {residue}, replacing with X')
+                        sequences[chain] += 'X'
+                    else:
+                        sequences[chain] += AAdict[residue]
     return sequences
 
 def get_timestamp():
