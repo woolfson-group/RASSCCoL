@@ -1,0 +1,78 @@
+{
+    "run": {
+        "receptor_path": "example/scapCC4_NRD/scapCC4.pdb",
+        "ligand_path": "example/scapCC4_NRD/NileRed.pdbqt",
+        "output_directory": "example/scapCC4_NRD",
+        "FASPR_path": "/opt/FASPR/FASPR",
+        "obabel_path": "/usr/bin/obabel",
+        "num_cpus": 8,
+        "use_gradient_boosted_trees": false,
+        "save_top_n": 3,
+        "datestamp": "2024-11-01",
+        "timestamp": "17-17-53",
+        "calc_seqs_only": false,
+        "cube_side_length": [
+            19.44,
+            19.44,
+            19.44
+        ],
+        "timeout": 180
+    },
+    "versions": {
+        "python": "3.9.18",
+        "vina": "1.2.5"
+    },
+    "design": {
+        "1": {
+            "res_info": {
+                "19": "AILV",
+                "44": "AILV",
+                "111": "AILV"
+            },
+            "cavity": 0,
+            "tolerance": 20,
+            "ligand_layer_vol": 109.74666666666667,
+            "starting_seq": [
+                "I",
+                "L",
+                "L"
+            ],
+            "volume": 207,
+            "target": 97.25333333333333
+        },
+        "2": {
+            "res_info": {
+                "16": "AILV",
+                "84": "AILV",
+                "114": "AILV"
+            },
+            "cavity": 0,
+            "tolerance": 20,
+            "ligand_layer_vol": 109.74666666666667,
+            "starting_seq": [
+                "L",
+                "L",
+                "I"
+            ],
+            "volume": 207,
+            "target": 97.25333333333333
+        },
+        "3": {
+            "res_info": {
+                "12": "AILV",
+                "51": "AILV",
+                "118": "AILV"
+            },
+            "cavity": 0,
+            "tolerance": 20,
+            "ligand_layer_vol": 109.74666666666667,
+            "starting_seq": [
+                "I",
+                "L",
+                "L"
+            ],
+            "volume": 207,
+            "target": 97.25333333333333
+        }
+    }
+}

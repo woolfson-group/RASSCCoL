@@ -1,9 +1,9 @@
 {
     "1": {
         "res_info": {
-            "A19": "AILV",
-            "A44": "AILV",
-            "A111": "AILV"
+            "19": "AILV",
+            "44": "AILV",
+            "111": "AILV"
         },
         "cavity": 0,
         "tolerance": 20,
@@ -11,9 +11,9 @@
     },
     "2": {
         "res_info": {
-            "A16": "AILV",
-            "A84": "AILV",
-            "A114": "AILV"
+            "16": "AILV",
+            "84": "AILV",
+            "114": "AILV"
         },
         "cavity": 0,
         "tolerance": 20,
@@ -21,9 +21,9 @@
     },
     "3": {
         "res_info": {
-            "A12": "AILV",
-            "A51": "AILV",
-            "A118": "AILV"
+            "12": "AILV",
+            "51": "AILV",
+            "118": "AILV"
         },
         "cavity": 0,
         "tolerance": 20,

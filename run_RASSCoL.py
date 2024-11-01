@@ -126,8 +126,7 @@ def main():
         layer: rasscol.layer_sequence_generator(
             design_config[layer]['res_info'],
             design_config[layer]['target'],
-            design_config[layer]['tolerance'],
-            design_config[layer]['oligomer'],
+            design_config[layer]['tolerance']
         ) for layer in design_config
     }
 
