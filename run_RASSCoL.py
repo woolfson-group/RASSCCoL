@@ -127,7 +127,6 @@ def main():
             design_config[layer]['res_info'],
             design_config[layer]['target'],
             design_config[layer]['tolerance'],
-            design_config[layer]['oligomer'],
         ) for layer in design_config
     }
 
