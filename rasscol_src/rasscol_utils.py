@@ -8,37 +8,92 @@ from itertools import product
 from multiprocessing import Pool, Lock
 from pathlib import Path
 import subprocess, csv, logging, math, re, sys
+from collections import Counter
 
 # third party modules
 import vina
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from rdkit.Chem import rdmolfiles
 
-def calc_bondi_vol(molecular_formula:str, num_rings:int, num_aromatic_rings:int) -> float:
+def smiles2mol(smiles, addH:bool = False):
+    
+    mol = Chem.MolFromSmiles(smiles)
+    
+    if addH:
+        mol = Chem.AddHs(mol)  # Add explicit hydrogens
+
+    # Generate 3D coordinates
+    AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+    
+    return mol
+
+def minimize_mol(mol):
+    # Perform UFF minimization
+    result = AllChem.UFFOptimizeMolecule(mol)
+
+    # Check if the minimization was successful
+    if result == 0:
+        print("Minimization successful!")
+    else:
+        print("Minimization failed.")
+    
+    return mol
+
+def mol2pdb(three_letter_code:str, mol, output_dir:Path):
+    
+    # Set the residue name for each atom
+    for atom in mol.GetAtoms():
+        atom.SetProp("residueName", three_letter_code)
+    
+    # Save the minimized molecule to a PDB file
+    pdb_path = output_dir / f'{three_letter_code}.pdb'
+    rdmolfiles.MolToPDBFile(mol, pdb_path)
+    
+    return pdb_path
+    
+def pdb2pdbqt(ligand_pdb_path, obabel_path:Path = Path('/usr/bin/obabel')):
+    
+    ligand_pdbqt_path = ligand_pdb_path.with_suffix('.pdbqt')
+    obabel_cmd = f'{obabel_path} -ipdb {ligand_pdb_path} -opdbqt -O {ligand_pdbqt_path}'
+    subprocess.run(obabel_cmd.split())
+    
+    return ligand_pdbqt_path
+
+def calc_bondi_vol_from_mol(mol:Chem.rdchem.Mol) -> float:
     """
     https://pubs.acs.org/doi/10.1021/jo034808o
     Rg = total rings
     RA = aromatic rings 
     RNA = non aromatic rings
     """
-    
-    elements = re.findall('[A-Z]', molecular_formula)
-    element_counts = re.findall('\d+', molecular_formula)
 
-    atom_counts = {k:int(v) for k,v in zip(elements, element_counts)}
-    
     bondi_vol = {'H':7.24, 'C':20.58, 'N':15.6, 'O':14.71, 'F': 13.31, 'Cl':22.54, 'Br':26.52, 'I':32.52, 'P':24.43, 'S': 24.43, 'As':26.52, 'B':40.48, 'Si':38.79, 'Se':28.73, 'Te':36.62}
-    
-    vsa = sum(atom_counts[a]*bondi_vol[a] for a in atom_counts)
-    
+
+    # get the counts of each element in the molecule
+    element_counts = Counter(atom.GetSymbol() for atom in mol.GetAtoms())
+
     # total number of atoms
-    num_atoms = sum(v for v in atom_counts.values())
+    num_atoms = len(mol.GetAtoms())
+
+    # Get the total number of rings
+    ring_info = mol.GetRingInfo()
+    num_rings = ring_info.NumRings()
+
+    # Count the number of aromatic rings
+    num_aromatic_rings = 0
+    for ring in ring_info.BondRings():
+        if all(mol.GetBondWithIdx(bond_idx).GetIsAromatic() for bond_idx in ring):
+            num_aromatic_rings += 1
 
     # total number of bonds
+    vsa = sum(element_counts[a]*bondi_vol[a] for a in element_counts)
     num_bonds = num_atoms - 1 - num_rings
     num_non_aromatic_rings = num_rings - num_aromatic_rings
     bondi_volume = vsa - 5.92*num_bonds - 14.7*num_aromatic_rings - 3.8*num_non_aromatic_rings
     return round(bondi_volume, 2)
 
-def tidy_ligand_pdbqt(ligand_pdbqt_path:Path, ligand_name:str, ligand_short_name:str):
+def tidy_ligand_pdbqt(ligand_pdbqt_path:Path, ligand_short_name:str):
     """Cleans up a ligand PDBQT file by replacing placeholders with actual ligand names."""
     
     # Open the ligand PDBQT file and read its content as a string
@@ -50,9 +105,6 @@ def tidy_ligand_pdbqt(ligand_pdbqt_path:Path, ligand_name:str, ligand_short_name
 
         # Replace the 'UNL' placeholder in the file with the actual short name of the ligand
         pdbqt_str = pdbqt_str.replace('UNL', ligand_short_name)
-
-        # Replace the 'Name =' placeholder with the full ligand name
-        pdbqt_str = pdbqt_str.replace('Name =', f'Name = {ligand_name}')
 
         # Write the modified content back to the PDBQT file
         with ligand_pdbqt_path.open('w') as f:

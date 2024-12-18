@@ -4,13 +4,15 @@
 
 ## Installation
 
-This code requires a small number of external libraries (see `env/RASSCoL_no_RF_env.yml`) as was tested using Python 3.9.18.
+This code requires a small number of external libraries (see `env/RASSCoL_no_RF_env.yml`) and was tested using Python 3.9.18.
 
 To set up the environment, run:
 
 ```bash
 conda env create -f env/RASSCoL_no_RF_env.yml
 ```
+
+To prepare files for AutoDock Vina, Open Babel is needed. [See here for installation](https://openbabel.org/docs/Installation/install.html#install-binaries)
 
 ## Running
 
