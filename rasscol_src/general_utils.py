@@ -2,6 +2,7 @@
 
 # builtins
 import datetime
+import concurrent.futures
 
 def pdb2seq(pdb_path: str) -> dict:
     """Extracts amino acid sequences from a PDB file."""
@@ -107,3 +108,18 @@ def get_pdbqt_coords(pdbqt_path: str, ca_only:bool=False) -> list:
     
     # Return coords as np.array
     return coords
+
+def run_with_timeout(func, *args, timeout=10):
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Submit the function to the executor
+            future = executor.submit(func, *args)
+            # Wait for the result with the specified timeout
+            result = future.result(timeout=timeout)
+            return result
+    except concurrent.futures.TimeoutError:
+        print(f"Function call timed out after {timeout} seconds.")
+        return None
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None

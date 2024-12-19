@@ -112,14 +112,10 @@ def main():
         'design':design_config
     }
 
-    # write out config for logging
-    with config_json_path.open('w') as f:
-        json.dump(config, f, indent=4)
-
     scaffold_ca_coords = get_pdbqt_coords(args.receptor_pdb_path, ca_only=True)
     pocket_ca_coords = [xyz for i, xyz in enumerate(scaffold_ca_coords, start=1) if i in design_idx]
     config['run']['pocket_ca_centroid'] = get_centroid(pocket_ca_coords)
-    num_lig_atoms = len(lig_coords)
+    config['run']['num_lig_atoms']  = len(lig_coords)
 
     # Generate the sequence generators dictionary
     seqs = {
@@ -130,28 +126,14 @@ def main():
         ) for layer in design_config
     }
 
-    # Define a wrapper function to run the sequence generator
-    def run_sequence_generator(starting_seq, seqs, design_idx, return_dict):
-        return_dict["result"] = rasscol.sequence_generator(starting_seq, seqs, design_idx)
-
-    # Create a manager to handle shared data
-    manager = multiprocessing.Manager()
-    return_dict = manager.dict()
-
-    # Create the process
-    process = multiprocessing.Process(target=run_sequence_generator, args=(starting_seq, seqs, design_idx, return_dict))
-
-    # Start the process and set a timeout
-    process.start()
-    process.join(timeout=config['run']['timeout'])
-
-    # Check if the process is still alive
-    if process.is_alive():
-        process.terminate()
-        print("The function call timed out!")
-    else:
-        seq_dict = return_dict["result"]
-
+    seq_dict = run_with_timeout(rasscol.sequence_generator, starting_seq, seqs, design_idx, timeout=config['run']['timeout'])
+    
+    config['seqs'] = seq_dict
+    
+    # write out config for logging
+    with config_json_path.open('w') as f:
+        json.dump(config, f, indent=4)
+    
     print(f'Sequences generated: {len(seq_dict)}')
 
     if config['run']['calc_seqs_only']:
@@ -161,7 +143,7 @@ def main():
         pass
 
     else:
-        rasscol.run_parallel(starting_seq, design_idx, seq_dict, config['run']['pocket_ca_centroid'], num_lig_atoms, job_dir, args.receptor_pdb_path, args.ligand_pdbqt_path, config, design_config)
+        rasscol.run_parallel(starting_seq, design_idx, config)
         
         results_csv = job_dir / 'RASSCoL_results.csv'
         

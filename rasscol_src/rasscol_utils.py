@@ -177,36 +177,20 @@ class RASSCoL:
             
         return seq_dict
 
-    def repack_pdb(self,
-        input_path: Path, 
-        output_pdb_path: Path, 
-        seq: str = None, 
-        rm_seq_txt: bool = True,
-        faspr_path: Path = Path('/opt/FASPR/FASPR'),
-        verbose: int = 0
-        ):
+    def repack_pdb(self,input_path: Path, output_pdb_path: Path, seq: str = None, \
+            rm_seq_txt: bool = True, faspr_path: Path = Path('/opt/FASPR/FASPR')):
 
         # Construct the command for subprocess
-        repack_cmd = [
-            faspr_path,
-            '-i', str(input_path),
-            '-o', str(output_pdb_path)
-        ]
-
+        repack_cmd = [faspr_path, '-i', str(input_path), '-o', str(output_pdb_path)]
+        
         # Write the sequence to a file if provided and append path to command
         if seq != None:
-            repack_seq_path = output_pdb_path.parent / f'{output_pdb_path.stem}_seq.txt'
-            with repack_seq_path.open('w') as repack_seq_file:
-                repack_seq_file.write(seq)
+            repack_seq_path = output_pdb_path.with_suffix('.seq')
+            repack_seq_path.write_text(seq)
             repack_cmd.extend(['-s', str(repack_seq_path)])
-
-        # Execute the command with varying verbosity
-        if verbose == 0:
-            subprocess.run(repack_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        elif verbose == 1:
-            subprocess.run(repack_cmd, stdout=subprocess.DEVNULL)
-        elif verbose == 2:
-            subprocess.run(repack_cmd)
+        
+        # Execute the command
+        subprocess.run(repack_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         # Delete sequence files if unwanted
         if rm_seq_txt and repack_seq_path.is_file():
@@ -216,14 +200,9 @@ class RASSCoL:
         obabel_cmd=f'{obabel_path} -ipdb {receptor_pdb_path} -opdbqt --addpolarh -xr -O {receptor_pdbqt_path}'
         subprocess.run(obabel_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
 
-    def quick_vina(self,
-        receptor_pdbqt_path:Path, 
-        ligand_pdbqt_path:Path, 
-        output_pdbqt_path:Path,
-        center_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        box_size: list[float, float, float] = [20, 20, 20],
-        do_quick: bool = True,
-    ) -> float:
+    def quick_vina(self, receptor_pdbqt_path:Path,  ligand_pdbqt_path:Path, output_pdbqt_path:Path, \
+            center_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0), box_size: list[float, float, float] = [20, 20, 20], \
+            do_quick: bool = True) -> float:
 
         # Initialise Vina with specified parameters
         v = vina.Vina(sf_name='vina', seed=42, verbosity=0, cpu=1)
@@ -232,7 +211,7 @@ class RASSCoL:
         v.set_receptor(str(receptor_pdbqt_path))
         v.set_ligand_from_file(str(ligand_pdbqt_path))
 
-        # Generate 20 angstrom cube affinity map around the specified center
+        # Generate affinity map around the specified center
         if do_quick:
             v.compute_vina_maps(center=center_xyz, box_size=box_size, spacing=0.5)
             v.dock(exhaustiveness=1, n_poses=1, max_evals=5_000)
@@ -252,28 +231,21 @@ class RASSCoL:
             return vina_score
         else:
             return math.log10(vina_score)
-
-    def pack_and_dock(self, seq_id, sequence, scaffold, ligand, pocket_centroid, output_dir, cube_side_length, config, save=False):
-        
-        packed_pdb_path = output_dir / f'{seq_id}.pdb'
-        packed_pdbqt_path = packed_pdb_path.with_suffix('.pdbqt')
-        docked_pdbqt_path = output_dir / f'{packed_pdb_path.stem}_{ligand.stem}.pdbqt'
-
-        self.repack_pdb(scaffold,packed_pdb_path,sequence, faspr_path=config['run']['FASPR_path'])
-        self.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path, obabel_path=config['run']['obabel_path'])
-        vina_score = self.quick_vina(packed_pdbqt_path, ligand, docked_pdbqt_path, pocket_centroid, cube_side_length)
-        
+    
+    def calc_lig_dist_from_pocket(self, docked_pdbqt_path:Path, pocket_centroid:list) -> float:
         dock_coords = get_pdbqt_coords(docked_pdbqt_path)
         dock_centroid = get_centroid(dock_coords)
-        dist_from_pocket = euclidean_distance(pocket_centroid, dock_centroid)
+        return euclidean_distance(pocket_centroid, dock_centroid)
+    
+    def calc_vol_metrics(self, volumes, parent_volume, total_ligand_volume):
+        # Calculate side-chain volumes
+        total_side_chain_vol = sum(volumes)
 
-        packed_pdb_path.unlink()
-
-        if not save:
-            packed_pdbqt_path.unlink()
-            docked_pdbqt_path.unlink()
-
-        return vina_score, dist_from_pocket
+        # Calculate cavity volume and ligand fraction 
+        cavity_vol = parent_volume - total_side_chain_vol
+        cavity_lig_frac = cavity_vol / total_ligand_volume
+        
+        return total_side_chain_vol, cavity_vol, cavity_lig_frac
 
     # Global lock to be inherited by worker processes
     csv_lock = None
@@ -310,41 +282,51 @@ class RASSCoL:
                 writer = csv.writer(f)
                 writer.writerow(row)
     
-    def vina_worker(self, seq_id, combined_seq, modified_seq, volumes, scaffold, ligand, pocket_centroid, num_lig_atoms, log_file, csv_file, output_dir, cube_side_length, config):
+    def vina_worker(self, seq_id, seq_dict, config_run, log_file, csv_file):
         """
         Worker function for docking and data collection.
 
         Parameters:
             seq_id (str): Identifier for the sequence.
-            combined_seq (str): Sequence at the design positions.
-            modified_seq (str): Full modified sequence.
-            volumes (list): List of volumes associated with the sequence.
-            scaffold (Path): Path to the scaffold file.
-            ligand (Path): Path to the ligand file.
-            pocket_centroid (tuple): Coordinates of the pocket centroid.
-            num_lig_atoms (int): Number of atoms in the ligand.
+            config (dict): Configuration dictionary for run.
             log_file (Path): Path to the log file.
             csv_file (Path): Path to the CSV file.
-            output_dir (Path): Output directory.
 
         Returns:
             None
         """
+        
+        # read variables from config
+        combined_seq =  seq_dict['pocket_seq']               # Short sequence (pocket sequence)
+        modified_seq = seq_dict['full_seq']                  # Long sequence (full sequence)
+        volumes = seq_dict['volume']                         # Volumes associated with the sequence
+        scaffold = Path(config_run['receptor_path'])         # Scaffold path
+        ligand = Path(config_run['ligand_path'])             # Ligand path
+        pocket_centroid = config_run['pocket_ca_centroid']   # Pocket centroid
+        num_lig_atoms = config_run['num_lig_atoms']          # Number of ligand atoms
+        output_dir = Path(config_run['output_directory'])    # Output directory
+        cube_side_length = config_run['cube_side_length']    # The cube side length of the docking grid. 
+        faspr_path = Path(config_run['FASPR_path'])
+        obabel_path = Path(config_run['obabel_path'])
 
         # Set up logging inside each worker
         self.setup_logger(log_file)
+                
+        # generate file path variables
+        packed_pdb_path = output_dir / f'{seq_id}.pdb'
+        packed_pdbqt_path = packed_pdb_path.with_suffix('.pdbqt')
+        docked_pdbqt_path = output_dir / f'{packed_pdb_path.stem}_{ligand.stem}.pdbqt'
 
         try:
-            # Perform docking and calculations
-            vina_score, dist_from_pocket = self.pack_and_dock(seq_id, modified_seq, scaffold, ligand, pocket_centroid, output_dir, cube_side_length, config)
-            vina_score_norm = round(vina_score / num_lig_atoms, 3)
+            # Perform docking
+            self.repack_pdb(scaffold, packed_pdb_path, modified_seq, faspr_path=faspr_path)
+            self.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path, obabel_path=obabel_path)
+            vina_score = self.quick_vina(packed_pdbqt_path, ligand, docked_pdbqt_path, pocket_centroid, cube_side_length)
             
-            # Calculate side-chain volumes
-            total_side_chain_vol = sum(volumes)
-
-            # Calculate cavity volume and ligand fraction 
-            cavity_vol = parent_volume - total_side_chain_vol
-            cavity_lig_frac = cavity_vol / total_ligand_volume
+            # Calculate other scores
+            vina_score_norm = round(vina_score / num_lig_atoms, 3)
+            dist_from_pocket = self.calc_lig_dist_from_pocket(docked_pdbqt_path, pocket_centroid)
+            total_side_chain_vol, cavity_vol, cavity_lig_frac = self.calc_vol_metrics(volumes, parent_volume, total_ligand_volume)
 
             # Write to CSV file in a thread-safe manner
             self.write_to_csv(csv_file, [seq_id, modified_seq, combined_seq, vina_score, vina_score_norm, dist_from_pocket, total_side_chain_vol, cavity_vol, cavity_lig_frac])
@@ -353,48 +335,36 @@ class RASSCoL:
 
         except Exception as e:
             logging.error(f'Error in job {seq_id}: {e}')
+            
+        # delete unwanted files
+        packed_pdb_path.unlink()
+        packed_pdbqt_path.unlink()
+        docked_pdbqt_path.unlink()
 
-    
-    def run_parallel(self, starting_seq, design_idx, seq_gen, pocket_centroid, num_lig_atoms, output_dir, scaffold, ligand, config, design_config):
+    def run_parallel(self, starting_seq, design_idx, config):
         
+        # define global variables to be used for each run
         global csv_lock  # Declare the global lock
         csv_lock = Lock()  # Initialize the lock once, before starting the pool
         
-        global parent_volume  # Declare the starting pocket side chain volume
+        global parent_volume  
         parent_volume = sum(self.aa_vol[resname] for resnum, resname in enumerate(starting_seq, start=1) if resnum in design_idx)
         
         global total_ligand_volume # Declare the total ligand volume for all layers
-        total_ligand_volume = sum(design_config[layer]['ligand_layer_vol'] for layer in design_config)
+        total_ligand_volume = sum(config['design'][layer]['ligand_layer_vol'] for layer in config['design'])
         
         # Initialize logging
-        log_file = output_dir / 'RASSCoL_log.log'
+        log_file = Path(config['run']['output_directory']) / 'RASSCoL_log.log'
         self.setup_logger(log_file)
 
         # Initialize CSV file with headers
-        csv_file = output_dir / 'RASSCoL_results.csv'
+        csv_file = Path(config['run']['output_directory']) / 'RASSCoL_results.csv'
         
         if not csv_file.exists():
             self.write_to_csv(csv_file, ['id', 'seq', 'pocket_seq', 'vina_score', 'vina_score_norm', 'distance_from_pocket', 'sc_vol', 'cavity_vol', 'cavity_ligand_frac'])
 
         # Prepare arguments for starmap
-        args = [
-            (
-                seq_id,                                  # Sequence ID
-                seq_gen[seq_id]['pocket_seq'],           # Short sequence (pocket sequence)
-                seq_gen[seq_id]['full_seq'],             # Long sequence (full sequence)
-                seq_gen[seq_id]['volume'],               # Volumes associated with the sequence
-                scaffold,                                # Scaffold path
-                ligand,                                  # Ligand path
-                pocket_centroid,                         # Pocket centroid
-                num_lig_atoms,                           # Number of ligand atoms
-                log_file,                                # Log file path
-                csv_file,                                # CSV file path
-                output_dir,                              # Output directory
-                config['run']['cube_side_length'],       # The cube side length of the docking grid. 
-                config                                   # Configuration info
-            )
-            for seq_id in seq_gen
-        ]
+        args = [(seq_id, config['seqs'][seq_id], config['run'], log_file, csv_file) for seq_id in config['seqs']]
 
         # Multiprocessing execution
         with Pool(config['run']['num_cpus']) as pool:
@@ -412,5 +382,16 @@ class RASSCoL:
 
         # Iterate through the top N and call pack_and_dock
         for row in top_n:
-            self.pack_and_dock(row['id'], row['seq'], Path(config['run']['receptor_path']), Path(config['run']['ligand_path']), config['run']['pocket_ca_centroid'], Path(config['run']['output_directory']), config['run']['cube_side_length'], config=config, save=True)
+            
+            # generate file path variables
+            packed_pdb_path = Path(config['run']['output_directory']) / f"{row['id']}.pdb"
+            packed_pdbqt_path = packed_pdb_path.with_suffix('.pdbqt')
+            docked_pdbqt_path = Path(config['run']['output_directory']) / f"{packed_pdb_path.stem}_{Path(config['run']['ligand_path']).stem}.pdbqt"
+            
+            self.repack_pdb(Path(config['run']['receptor_path']), packed_pdb_path, row['seq'], faspr_path=config['run']['FASPR_path'])
+            self.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path, obabel_path=config['run']['obabel_path'])
+            _ = self.quick_vina(packed_pdbqt_path, Path(config['run']['ligand_path']), docked_pdbqt_path, config['run']['pocket_ca_centroid'], config['run']['cube_side_length'])
+            
+            # delete unwanted files
+            packed_pdb_path.unlink() 
             print(f"Saved design {row['id']} at {config['run']['output_directory']}/{row['id']}_{Path(config['run']['ligand_path']).stem}.pdbqt")
