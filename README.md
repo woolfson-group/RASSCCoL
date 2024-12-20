@@ -35,7 +35,7 @@ python run_RASSCoL.py \
 
 There are several options you can manipulate for RASSCoL, see [Running options](#running-options).
 
-For help setting up the ligand and the design configuration, see `./01_RASSCoL_ligand_prep.ipynb` and `./02_RASSCoL_design_prep.ipynb` respectively.
+For help setting up the ligand and the design configuration, see `./notebooks/01_RASSCoL_ligand_prep.ipynb` and `./notebooks/02_RASSCoL_design_prep.ipynb` respectively.
 
 ### Running options
 
