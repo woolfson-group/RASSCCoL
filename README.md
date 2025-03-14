@@ -1,4 +1,4 @@
-# Code for running RASSCoL
+# Code for running RASSCCoL
 
 *This README is intended for Tombstone2 users in the Woolfson group only.*
 
@@ -6,12 +6,12 @@ Active Sampling using Gradient Boosted trees is an experimental feature, and is 
 
 ## Installation
 
-This code requires a small number of external libraries (see `env/RASSCoL_no_RF_env.yml`) and was tested using Python 3.9.18.
+This code requires a small number of external libraries (see `env/RASSCCoL_no_RF_env.yml`) and was tested using Python 3.9.18.
 
 To set up the environment, run:
 
 ```bash
-conda env create -f env/RASSCoL_no_RF_env.yml
+conda env create -f env/RASSCCoL_no_RF_env.yml
 ```
 
 To prepare files for AutoDock Vina, Open Babel is needed. [See here for installation](https://openbabel.org/docs/Installation/install.html#install-binaries)
@@ -28,26 +28,26 @@ The minimum required options are:
 First I suggest you run the example to test installation (~ 5 minutes):
 
 ```bash
-python run_RASSCoL.py \
+python run_RASSCCoL.py \
     -r ./example/scapCC4_NRD/scapCC4.pdb \
     -l ./example/scapCC4_NRD/NileRed.pdbqt \
     -d ./example/scapCC4_NRD/design_config.json \ 
     -o ./example/scapCC4_NRD/
 ```
 
-There are several options you can manipulate for RASSCoL, see [Running options](#running-options).
+There are several options you can manipulate for RASSCCoL, see [Running options](#running-options).
 
-For help setting up the ligand and the design configuration, see `./notebooks/01_RASSCoL_ligand_prep.ipynb` and `./notebooks/02_RASSCoL_design_prep.ipynb` respectively.
+For help setting up the ligand and the design configuration, see `./notebooks/01_RASSCCoL_ligand_prep.ipynb` and `./notebooks/02_RASSCCoL_design_prep.ipynb` respectively.
 
 ### Running options
 
-For see below for full list, or use `python run_RASSCoL.py - h`.
+For see below for full list, or use `python run_RASSCCoL.py - h`.
 
 ```text
-usage: run_RASSCoL.py [-h] -o OUTPUT_DIRECTORY -r RECEPTOR_PDB_PATH -l LIGAND_PDBQT_PATH -d DESIGN_CONFIG_JSON_PATH [-g] [-f FASPR_PATH] [-b OBABEL_PATH] [-n NUM_CPUS] [-s SAVE_TOP_N] [-c]
+usage: run_RASSCCoL.py [-h] -o OUTPUT_DIRECTORY -r RECEPTOR_PDB_PATH -l LIGAND_PDBQT_PATH -d DESIGN_CONFIG_JSON_PATH [-g] [-f FASPR_PATH] [-b OBABEL_PATH] [-n NUM_CPUS] [-s SAVE_TOP_N] [-c]
                       [-t TIMEOUT]
 
-Run the RASSCoL pipeline for generating binding pocket sequences and initial evaluation with Vina.
+Run the RASSCCoL pipeline for generating binding pocket sequences and initial evaluation with Vina.
 
 optional arguments:
   -h, --help            show this help message and exit
