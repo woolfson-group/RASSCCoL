@@ -9,12 +9,22 @@ from multiprocessing import Pool, Lock
 from pathlib import Path
 import subprocess, csv, logging, math, re, sys
 from collections import Counter
+import random
+import warnings
+
 
 # third party modules
 import vina
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem import rdmolfiles
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import tensorflow_decision_forests as tfdf
+
+seed = 42
+random.seed(seed)
 
 def smiles2mol(smiles, addH:bool = False):
     
@@ -27,6 +37,15 @@ def smiles2mol(smiles, addH:bool = False):
     AllChem.EmbedMolecule(mol, AllChem.ETKDG())
     
     return mol
+
+def sample_and_remove(numbers:list, number_to_sample) -> list:
+    random_numbers = []
+    for _ in range(number_to_sample):
+        random_number = random.choice(numbers)
+        random_numbers.append(random_number)
+        numbers.remove(random_number)
+        
+    return numbers, random_numbers
 
 def minimize_mol(mol):
     # Perform UFF minimization
@@ -341,7 +360,7 @@ class RASSCoL:
         packed_pdbqt_path.unlink()
         docked_pdbqt_path.unlink()
 
-    def run_parallel(self, starting_seq, design_idx, config):
+    def run_parallel(self, starting_seq, design_idx, config, slice=None):
         
         # define global variables to be used for each run
         global csv_lock  # Declare the global lock
@@ -364,7 +383,10 @@ class RASSCoL:
             self.write_to_csv(csv_file, ['id', 'seq', 'pocket_seq', 'vina_score', 'vina_score_norm', 'distance_from_pocket', 'sc_vol', 'cavity_vol', 'cavity_ligand_frac'])
 
         # Prepare arguments for starmap
-        args = [(seq_id, config['seqs'][seq_id], config['run'], log_file, csv_file) for seq_id in config['seqs']]
+        if slice is not None:
+            args = [(seq_id, config['seqs'][seq_id], config['run'], log_file, csv_file) for seq_id in slice]
+        else:
+            args = [(seq_id, config['seqs'][seq_id], config['run'], log_file, csv_file) for seq_id in config['seqs']]
 
         # Multiprocessing execution
         with Pool(config['run']['num_cpus']) as pool:
@@ -395,3 +417,192 @@ class RASSCoL:
             # delete unwanted files
             packed_pdb_path.unlink() 
             print(f"Saved design {row['id']} at {config['run']['output_directory']}/{row['id']}_{Path(config['run']['ligand_path']).stem}.pdbqt")
+
+    def run_active_sampling(self, starting_seq, design_idx, config, stopping_patience = None, verbose = 0):
+
+        csv_file = Path(config['run']['output_directory']) / 'RASSCoL_results.csv'
+
+
+        final_num_designs = config['run']['gradient_boosted_top_sequences']
+        steps = config['run']['gradient_boosted_steps']
+
+        #2% of the entire sequence space sampled at a time
+        step_size = int(len(config['seqs'])*0.02)
+
+
+        num_models = 10  # Number of models to train in the ensemble, 10 was found to save training time but give good uncertainty values
+        # make a dataframe from the config, easier to track sampling process this way
+
+        df_seqs = pd.DataFrame(config['seqs']).T
+
+        # split up the pocket sequences into one residue per column
+        # dropping the first and last column as these will be empty strings ('')
+        # (N seqs x N pocket residues)
+        df_pocket_exploded = df_seqs['pocket_seq'].str.split('', expand=True).iloc[:,1:-1]
+
+        # rename columns
+        df_pocket_exploded.columns = [f's{n}' for n in range(df_pocket_exploded.shape[1])]
+
+        # split up layer volumes into columns (N seqs x N layers)
+        vol_cols = [f'v{n}' for n in range(len(df_seqs.loc[0,'volume']))]
+        df_volume_exploded = pd.DataFrame(df_seqs.volume.tolist(), index=df_seqs.index, columns=vol_cols)
+
+        # join the sequence and volume dataframes (N seqs x (N layers + N pocket residues))
+        df_rf = pd.concat([df_pocket_exploded, df_volume_exploded], axis=1)
+
+        df_rf['Docking'] = 0.
+
+        seq_ids = list(df_rf.index)
+
+        #shuffle the dataset, select training and testing sets
+        seq_ids, train_index = sample_and_remove(seq_ids, round(step_size*0.8))
+        seq_ids, mse_index = sample_and_remove(seq_ids, round(step_size*0.2))
+
+        self.run_parallel(starting_seq, design_idx, config, [int(x) for x in train_index])
+        self.run_parallel(starting_seq, design_idx, config, [int(x) for x in mse_index])
+
+        results_df = pd.read_csv(csv_file, index_col='id')
+        results_df.index = results_df.index.astype(int)
+
+        # Update training data with new docking scores
+        print(results_df.loc[train_index, 'vina_score'])
+        print('\n')
+        print(df_rf.loc[train_index, 'Docking'])
+
+        df_rf.loc[train_index, 'Docking'] = results_df.loc[train_index, 'vina_score']
+        df_rf.loc[mse_index, 'Docking'] = results_df.loc[mse_index, 'vina_score']
+        #damped positive values to ensure smoother training
+        df_rf.Docking[df_rf.Docking>0]=np.log(df_rf.Docking[df_rf.Docking>0])
+
+        print(df_rf.loc[train_index, 'Docking'])
+
+        mse_list = []
+
+        # Set up logging 
+        sampling_log_file = Path(config['run']['output_directory']) / 'RASSCoL_sampling.log'
+        open_sampling_log = open(sampling_log_file, 'w')
+
+        if stopping_patience is None:
+            warnings.warn('stopping_patience = None, validation set will be merged with the training set')
+
+        # ------------------------- Main Loop -------------------------
+
+        for i in range(steps):
+            print(f'\nStarting Step {i + 1}/{steps}')
+
+            # Prepare training and test datasets
+            if stopping_patience is not None:
+                df_train = df_rf.loc[train_index]
+                df_mse = df_rf.loc[mse_index]
+            else:
+                df_train = df_rf.loc[np.concatenate((train_index, mse_index))]
+            
+            df_test = df_rf.drop(np.concatenate((train_index, mse_index)))
+            df_mse = df_rf.loc[mse_index]
+            
+            # Drop the "Predictions" column if it exists
+            features = [col for col in df_train.columns if col not in ['Docking', 'Predictions', 'Predictions_std']]
+
+            # Convert data to TensorFlow datasets
+            train_ds = tfdf.keras.pd_dataframe_to_tf_dataset(df_train[features + ['Docking']], label='Docking', task=tfdf.keras.Task.REGRESSION)
+            test_ds = tfdf.keras.pd_dataframe_to_tf_dataset(df_test[features + ['Docking']], label='Docking', task=tfdf.keras.Task.REGRESSION)
+            mse_ds = tfdf.keras.pd_dataframe_to_tf_dataset(df_mse[features + ['Docking']], label='Docking', task=tfdf.keras.Task.REGRESSION)
+
+            # ------------------------- Model Training -------------------------
+
+            print('Training Gradient Boosted Trees models...')
+            tuner = tfdf.tuner.RandomSearch(num_trials=20, use_predefined_hps=True)
+            models = []
+            
+            for k in range(num_models):
+                model = tfdf.keras.GradientBoostedTreesModel(tuner=tuner, task=tfdf.keras.Task.REGRESSION, random_seed=k, verbose=verbose)
+                model.fit(train_ds)
+                models.append(model)
+                print(f'Model {k + 1}/{num_models} trained.')
+
+            print(f'{num_models} models trained successfully.')
+
+            class CombinedModel(tf.keras.Model):
+                """Ensemble model combining predictions from multiple Gradient Boosted Trees models."""
+                def call(self, inputs):
+                    predictions = tf.concat([submodel(inputs) for submodel in models], axis=1)
+                    return tf.math.reduce_mean(predictions, axis=1), tf.math.reduce_std(predictions, axis=1)
+
+            combined_model = CombinedModel()
+
+            # ------------------------- Linear Scaling for Predictions -------------------------
+
+            print('Calibrating model predictions to align with experimental docking scores...')
+            train_predictions, _ = combined_model.predict(train_ds)
+            #coef = np.polyfit(train_predictions.flatten(), df_train['Docking'].values, 1)
+            #scaling_function = np.poly1d(coef)
+
+            # ------------------------- Evaluate on MSE Dataset -------------------------
+
+            if stopping_patience is not None:
+                mse_predictions_scaled, _ = combined_model.predict(mse_ds)
+                #mse_predictions_scaled = scaling_function(mse_predictions.flatten())
+                mse = np.mean(np.square(mse_predictions_scaled - df_mse['Docking'].values))
+
+                mse_list.append(mse)
+                open_sampling_log.write(f'Step {i + 1} validation MSE: {mse:.4f}')
+
+                # Check for early stopping
+                if i >= stopping_patience and all(x > mse for x in mse_list[-stopping_patience:]):
+                    print(f'Stopping early after {i + 1} steps due to no improvement in MSE.')
+                    break
+
+            # ------------------------- Active Sampling -------------------------
+
+            test_predictions_scaled, prediction_std = combined_model.predict(test_ds)
+            #test_predictions_scaled = scaling_function(test_predictions.flatten())
+
+            mse = np.mean(np.square(test_predictions_scaled - df_test['Docking'].values))
+            open_sampling_log.write(f'Step {i + 1} validation MSE: {mse:.4f}')
+
+            # Save predictions
+            df_rf.loc[df_test.index, 'Predictions'] = test_predictions_scaled
+            df_rf.loc[df_test.index, 'Predictions_std'] = prediction_std
+
+            # Select samples for the next round
+            worst_index = df_rf.nlargest(round(step_size * 0.25), 'Predictions_std').index  # High uncertainty
+            best_index = df_rf.nsmallest(round(step_size * 0.25), 'Predictions').index  # Best docking scores
+
+            # Combine worst and best indices, ensuring no duplicates
+            combined_index = worst_index.union(best_index)
+
+            # Exclude indices already in df_train to avoid duplicates
+            allowed_sample_space = df_rf.index.difference(df_train.index.union(combined_index))
+
+            # Randomly sample from the allowed sample space
+            random_index = allowed_sample_space.to_series().sample(n=round(step_size * 0.5), random_state=seed).index
+
+            # Final combined index with worst, best, and random samples
+            final_combined_index  = pd.Index(worst_index).union(best_index).union(random_index).unique()
+            new_test_index = list(final_combined_index.difference(results_df.index))
+
+            # ------------------------- Dock New Samples -------------------------
+
+            print(f'Docking {len(new_test_index)} new samples...')
+            self.run_parallel(starting_seq, design_idx, config, [int(x) for x in new_test_index])
+
+            results_df = pd.read_csv(csv_file, index_col='id')
+            results_df.index = results_df.index.astype(int)
+
+            # Update training data with new docking scores
+            df_rf.loc[new_test_index, 'Docking'] = results_df.loc[new_test_index, 'vina_score']
+            #damped positive values to ensure smoother training
+            df_rf.Docking[df_rf.Docking>0]=np.log(df_rf.Docking[df_rf.Docking>0])
+            train_index = list(set(train_index + new_test_index))
+    
+    # ----------------------------- Dock Best predictions -----------------------
+
+        #prevent redocking already sampled sequences
+        allowed_sample_space = df_rf.index.difference(train_index)
+        best_index = df_rf.nsmallest(final_num_designs, 'Predictions').index
+        self.run_parallel(starting_seq, design_idx, config, [int(x) for x in best_index])
+
+        open_sampling_log.close()
+
+
+

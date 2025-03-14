@@ -28,6 +28,12 @@ def main():
     
     parser.add_argument('-g', '--use_gradient_boosted_trees', action='store_true', default=False,
                         help='Use gradient boosted trees (default: False)')
+
+    parser.add_argument('-j','--gradient_boosted_top_sequences', type=int, default=100000,
+                        help='Number of sequences to sample after training gradient booseted trees (default: 100 000)')
+
+    parser.add_argument('-e','--gradient_boosted_steps', type=int, default=10,
+                        help='Number of steps to perform active sampling (default: 10)')
     
     parser.add_argument('-f', '--faspr_path', type=Path, default=Path('/opt/FASPR/FASPR'),
                         help='Path to the FASPR executable (default: /opt/FASPR/FASPR)')
@@ -46,6 +52,9 @@ def main():
     
     parser.add_argument('-t', '--timeout', type=int, default=180,
                         help='Timeout duration in seconds (default: 180)')
+
+    parser.add_argument('-x', '--overwrite',  action='store_true', default=False,
+                        help='Overwrite existing data')
     
     # Parse the arguments
     args = parser.parse_args()
@@ -57,6 +66,20 @@ def main():
     job_dir = args.output_directory 
     job_dir.mkdir(exist_ok=True, parents=True)
     config_json_path = job_dir / 'config.json'
+
+    results_csv = job_dir / 'RASSCoL_results.csv'
+    log_file = job_dir / 'RASSCoL_log.log'
+    sampling_file = job_dir / 'RASSCoL_sampling.log'
+
+
+    if results_csv.exists():
+        if args.overwrite:
+            log_file.unlink()
+            results_csv.unlink()
+            sampling_file.unlink()
+        else:
+            warnings.warn('RASSCoL_results.csv already exists! Rename it to prevent data loss.')
+            return 0
 
     with open(args.design_config_json_path, 'r') as f:
         design_config = json.load(f)
@@ -98,6 +121,8 @@ def main():
             'obabel_path':str(args.obabel_path),
             'num_cpus':args.num_cpus,
             'use_gradient_boosted_trees':args.use_gradient_boosted_trees,
+            'gradient_boosted_top_sequences':args.gradient_boosted_top_sequences,
+            'gradient_boosted_steps':args.gradient_boosted_steps,
             'save_top_n':args.save_top_n,
             'datestamp': datestamp,
             'timestamp': timestamp,
@@ -127,7 +152,6 @@ def main():
     }
 
     seq_dict = run_with_timeout(rasscol.sequence_generator, starting_seq, seqs, design_idx, timeout=config['run']['timeout'])
-    
     config['seqs'] = seq_dict
     
     # write out config for logging
@@ -136,37 +160,44 @@ def main():
     
     print(f'Sequences generated: {len(seq_dict)}')
 
+    if config['run']['use_gradient_boosted_trees']:
+        
+        seqs_to_be_sampled=int(config['run']['gradient_boosted_top_sequences']+config['run']['gradient_boosted_steps']*len(seq_dict)*0.02)
+        if seqs_to_be_sampled>len(seq_dict):
+            warnings.warn(f'Gradient boosted trees requested but the total number of sequences is less than the requested sampled sequences\nGradient boosted trees switched off, performing exhaustive search!')
+            config['run']['use_gradient_boosted_trees']=False
+
     if config['run']['calc_seqs_only']:
-        pass
+        return
 
     elif config['run']['use_gradient_boosted_trees']:
-        pass
+        rasscol.run_active_sampling(starting_seq, design_idx, config)
 
     else:
         rasscol.run_parallel(starting_seq, design_idx, config)
         
-        results_csv = job_dir / 'RASSCoL_results.csv'
+
+    
+    # Read CSV data and store it in a list of dictionaries
+    with results_csv.open() as f:
+        reader = csv.DictReader(f)
+        results = [row for row in reader]
+
+    # Sort the results based on the 'vina_score_norm' column and get the top N
+    data = sorted(results, key=lambda x: float(x['vina_score_norm']))
+
+    # Write the list of dictionaries to a CSV file
+    with open(results_csv, mode='w', newline='') as csvfile:
+        # Create a csv.DictWriter object
+        writer = csv.DictWriter(csvfile, fieldnames=data[0].keys())
         
-        # Read CSV data and store it in a list of dictionaries
-        with results_csv.open() as f:
-            reader = csv.DictReader(f)
-            results = [row for row in reader]
-
-        # Sort the results based on the 'vina_score_norm' column and get the top N
-        data = sorted(results, key=lambda x: float(x['vina_score_norm']))
-
-        # Write the list of dictionaries to a CSV file
-        with open(results_csv, mode='w', newline='') as csvfile:
-            # Create a csv.DictWriter object
-            writer = csv.DictWriter(csvfile, fieldnames=data[0].keys())
-            
-            # Write the header (field names)
-            writer.writeheader()
-            
-            # Write the data
-            writer.writerows(data)
-            
-        rasscol.save_structures(config, job_dir / 'RASSCoL_results.csv')
+        # Write the header (field names)
+        writer.writeheader()
+        
+        # Write the data
+        writer.writerows(data)
+        
+    rasscol.save_structures(config, job_dir / 'RASSCoL_results.csv')
 
 if __name__ == '__main__':
     main()

@@ -1,0 +1,21 @@
+{
+    "1": {
+        "res_info": {
+            "12": "GAV",
+            "16": "AILVGS",
+            "19": "GAV",
+            "44": "AILVGS",
+            "51": "AILVGS",
+            "84": "AILVGS",
+            "111": "AILVGS",
+            "114": "GAV",
+            "118": "AILVGS",
+            "80": "IV",
+            "48": "IV",
+            "87": "IV"
+        },
+        "cavity": 0,
+        "tolerance": 20,
+        "ligand_layer_vol": 387.5
+}
+}
