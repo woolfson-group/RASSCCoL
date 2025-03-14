@@ -1,6 +1,8 @@
-# Code for running RASSCoL without Random Forest
+# Code for running RASSCoL
 
 *This README is intended for Tombstone2 users in the Woolfson group only.*
+
+Active Sampling using Gradient Boosted trees is an experimental feature, and is under active development.
 
 ## Installation
 
