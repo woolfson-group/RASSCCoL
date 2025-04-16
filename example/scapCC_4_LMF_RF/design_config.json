@@ -1,0 +1,22 @@
+{
+    "1": {
+        "res_info": {
+            "12": "AIVGS",
+            "16": "ALIVGS",
+            "51": "ALIVGS",
+            "84": "ALIVGS",
+            "118": "ALIVGS",
+            "80": "IN",
+            "19": "AIVGS",
+            "44": "ALIVGS",
+            "111": "ALIVGS",
+            "114": "AIVGS",
+            "47": "IN",
+            "87": "IN"
+        },
+        "cavity": 0,
+        "tolerance": 20,
+        "ligand_layer_vol": 260
+
+    }
+}

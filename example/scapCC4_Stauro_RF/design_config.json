@@ -1,21 +1,30 @@
 {
     "1": {
         "res_info": {
-            "12": "GAV",
-            "16": "AILVGS",
-            "19": "GAV",
-            "44": "AILVGS",
-            "51": "AILVGS",
-            "84": "AILVGS",
-            "111": "AILVGS",
-            "114": "GAV",
-            "118": "AILVGS",
-            "80": "IV",
-            "48": "IV",
-            "87": "IV"
+            "12": "AIVGSN",
+            "16": "ALIVGS",
+            "51": "ALIVGS",
+            "84": "ALIVGS",
+            "118": "ALIVGS",
+            "80": "IVN"
         },
         "cavity": 0,
         "tolerance": 20,
-        "ligand_layer_vol": 387.5
-}
+        "ligand_layer_vol": 150
+    
+},
+    "2": {
+        "res_info": {
+            "19": "AIVGSN",
+            "44": "ALIVGS",
+            "111": "ALIVGS",
+            "114": "AIVGSN",
+            "47": "IVN",
+            "87": "IVN"
+        },
+        "cavity": 0,
+        "tolerance": 20,
+        "ligand_layer_vol": 150
+
+    }
 }

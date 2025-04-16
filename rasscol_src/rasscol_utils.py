@@ -4,13 +4,15 @@
 from rasscol_src.general_utils import *
 
 # buitlins
-from itertools import product
-from multiprocessing import Pool, Lock
+from itertools import product, repeat
+from multiprocessing import Pool, Lock, Manager
+import copy
 from pathlib import Path
 import subprocess, csv, logging, math, re, sys
 from collections import Counter
 import random
 import warnings
+import time
 
 
 # third party modules
@@ -38,14 +40,12 @@ def smiles2mol(smiles, addH:bool = False):
     
     return mol
 
-def sample_and_remove(numbers:list, number_to_sample) -> list:
-    random_numbers = []
-    for _ in range(number_to_sample):
-        random_number = random.choice(numbers)
-        random_numbers.append(random_number)
-        numbers.remove(random_number)
-        
-    return numbers, random_numbers
+def sample_and_remove(numbers: list, number_to_sample: int):
+    arr = np.array(numbers)
+    idx = np.random.choice(len(arr), number_to_sample, replace=False)
+    sampled = arr[idx]
+    remaining = np.delete(arr, idx)
+    return remaining.astype('int'), sampled.astype('int')
 
 def minimize_mol(mol):
     # Perform UFF minimization
@@ -129,6 +129,165 @@ def tidy_ligand_pdbqt(ligand_pdbqt_path:Path, ligand_short_name:str):
         with ligand_pdbqt_path.open('w') as f:
             f.write(pdbqt_str)  # Save the updated file with the replaced values
 
+class VinaJob:
+    def __init__(self, seq_id, seq_dict, config_run, log_file, csv_file, aa_vol, csv_lock):
+        self.seq_id = seq_id
+        self.seq_dict = seq_dict
+        self.config = config_run
+        self.log_file = log_file
+        self.csv_file = csv_file
+        self.aa_vol = aa_vol
+        self.parent_volume = config_run['parent_volume']
+        self.total_ligand_volume = config_run['total_ligand_volume']
+        self.csv_lock = csv_lock
+
+        self.setup_logger()
+
+    def empty(self):
+        time.sleep(1)
+
+    @staticmethod
+    def update_sequence(start_seq, positions, amino_acids):
+        """Updates the starting sequence at specified positions with given amino acids."""
+        seq_list = list(start_seq)
+        for aa, pos in zip(amino_acids, positions):
+            seq_list[pos - 1] = aa  # Adjust for 0-based index
+        return ''.join(seq_list)
+
+    def setup_logger(self):
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        if logger.hasHandlers():
+            logger.handlers.clear()
+
+        file_handler = logging.FileHandler(self.log_file)
+        console_handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter('%(asctime)s - %(processName)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+
+    def write_to_csv(self, row):
+        with self.csv_lock:
+            with open(self.csv_file, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(row)
+
+    @staticmethod
+    def repack_pdb(input_path: Path, output_pdb_path: Path, seq: str = None, \
+            rm_seq_txt: bool = True, faspr_path: Path = Path('/opt/FASPR/FASPR')):
+
+        # Construct the command for subprocess
+        repack_cmd = [faspr_path, '-i', str(input_path), '-o', str(output_pdb_path)]
+        
+        # Write the sequence to a file if provided and append path to command
+        if seq != None:
+            repack_seq_path = output_pdb_path.with_suffix('.seq')
+            repack_seq_path.write_text(seq)
+            repack_cmd.extend(['-s', str(repack_seq_path)])
+        
+        # Execute the command
+        subprocess.run(repack_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Delete sequence files if unwanted
+        if rm_seq_txt and repack_seq_path.is_file():
+            repack_seq_path.unlink()
+
+    @staticmethod
+    def receptor_pdb2pdbqt(receptor_pdb_path, receptor_pdbqt_path, obabel_path):
+        obabel_cmd=f'{obabel_path} -ipdb {receptor_pdb_path} -opdbqt --addpolarh -xr -O {receptor_pdbqt_path}'
+        subprocess.run(obabel_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+
+    @staticmethod
+    def quick_vina(receptor_pdbqt_path:Path,  ligand_pdbqt_path:Path, output_pdbqt_path:Path, \
+            center_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0), box_size: list[float, float, float] = [20, 20, 20], \
+            do_quick: bool = True) -> float:
+
+        # Initialise Vina with specified parameters
+        v = vina.Vina(sf_name='vina', seed=42, verbosity=0, cpu=1)
+        
+        # Load in receptor and ligand, converting to strings if necessary
+        v.set_receptor(str(receptor_pdbqt_path))
+        v.set_ligand_from_file(str(ligand_pdbqt_path))
+
+        # Generate affinity map around the specified center
+        if do_quick:
+            v.compute_vina_maps(center=center_xyz, box_size=box_size, spacing=0.5)
+            v.dock(exhaustiveness=1, n_poses=1, max_evals=5_000)
+
+        else:
+            v.compute_vina_maps(center=center_xyz, box_size=box_size)
+            v.dock(exhaustiveness=16, n_poses=1, max_evals=10_000)
+
+        # Retrieve the total score of the first pose
+        vina_score = v.energies(n_poses=1)[0][0]
+        
+        # Save best pose
+        v.write_poses(str(output_pdbqt_path), n_poses=1, overwrite=True)
+            
+        # Return the total score of the first pose, scaling to avoid very positive numbers due to clashed(e.g. 10e6, bad for ML)
+        if vina_score<0:
+            return vina_score
+        else:
+            return math.log10(vina_score)
+
+    @staticmethod
+    def calc_lig_dist_from_pocket(docked_pdbqt_path:Path, pocket_centroid:list) -> float:
+        dock_coords = get_pdbqt_coords(docked_pdbqt_path)
+        dock_centroid = get_centroid(dock_coords)
+        return euclidean_distance(pocket_centroid, dock_centroid)
+
+    @staticmethod
+    def calc_vol_metrics(volumes, parent_volume, total_ligand_volume):
+        # Calculate side-chain volumes
+        total_side_chain_vol = sum(volumes)
+
+        # Calculate cavity volume and ligand fraction 
+        cavity_vol = parent_volume - total_side_chain_vol
+        cavity_lig_frac = cavity_vol / total_ligand_volume
+        
+        return total_side_chain_vol, cavity_vol, cavity_lig_frac
+
+    def run(self):
+        try:
+            # Setup paths
+            output_dir = Path(self.config['output_directory'])
+            scaffold = Path(self.config['receptor_path'])
+            ligand = Path(self.config['ligand_path'])
+            faspr_path = Path(self.config['FASPR_path'])
+            obabel_path = Path(self.config['obabel_path'])
+
+            combined_seq = self.seq_dict['pocket_seq']
+            modified_seq = VinaJob.update_sequence(self.config['starting_seq'], self.config['design_idx'], combined_seq)
+
+            packed_pdb_path = output_dir / f'{self.seq_id}.pdb'
+            packed_pdbqt_path = packed_pdb_path.with_suffix('.pdbqt')
+            docked_pdbqt_path = output_dir / f'{packed_pdb_path.stem}_{ligand.stem}.pdbqt'
+
+            VinaJob.repack_pdb(scaffold, packed_pdb_path, modified_seq, faspr_path=faspr_path)
+            VinaJob.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path, obabel_path=obabel_path)
+            vina_score = VinaJob.quick_vina(packed_pdbqt_path, ligand, docked_pdbqt_path, self.config['pocket_ca_centroid'], self.config['cube_side_length'])
+
+            vina_score_norm = round(vina_score / self.config['num_lig_atoms'], 3)
+            dist = VinaJob.calc_lig_dist_from_pocket(docked_pdbqt_path, self.config['pocket_ca_centroid'])
+            sc_vol, cav_vol, cav_lig_frac = VinaJob.calc_vol_metrics(self.seq_dict['volume'], self.parent_volume, self.total_ligand_volume)
+
+            self.write_to_csv([self.seq_id, combined_seq, vina_score, vina_score_norm, dist, sc_vol, cav_vol, cav_lig_frac])
+            logging.info(f'Job {self.seq_id} done with vina_score: {vina_score:.3f} norm: {vina_score_norm}')
+
+        except Exception as e:
+            logging.error(f'Error in job {self.seq_id}: {e}')
+            #active sampling will crash if this does not write a result
+            self.write_to_csv([self.seq_id, self.seq_dict['pocket_seq'], 0, 0, 0, 0, 0, 0])
+        finally:
+            # Clean up files
+            for f in [packed_pdb_path, packed_pdbqt_path, docked_pdbqt_path]:
+                try:
+                    f.unlink()
+                except FileNotFoundError:
+                    pass
+
 
 class RASSCoL:
     
@@ -156,33 +315,37 @@ class RASSCoL:
             tuple: A tuple containing the sequence (as a tuple of amino acids) and its total volume.
         """
 
-        # Get the amino acids for each index in sorted order
-        characters = [layer_info[i] for i in sorted(layer_info.keys())]
 
-        # Generate all possible combinations (this is an iterator, so it doesn't consume memory)
-        combinations = product(*characters)
+        aa_order = sorted(layer_info.keys())
+        aa_lists = [layer_info[i] for i in aa_order]
+        
+        # Create full Cartesian product of all amino acids
+        all_combos = list(product(*aa_lists))  # shape: (N, len(aa_lists))
 
-        # Set volume thresholds once outside the loop
-        lower_threshold = target - tolerance
-        upper_threshold = target + tolerance
+        # Convert to NumPy for vectorization
+        aa_array = np.array(all_combos)  # shape: (num_combos, seq_len)
 
-        for seq in combinations:
-            # Calculate volume of the sequence
-            volume = sum(self.aa_vol[aa] for aa in seq)
+        # Vectorized volume lookup
+        vol_lookup = np.vectorize(self.aa_vol.get)
+        vol_array = vol_lookup(aa_array)  # shape: (num_combos, seq_len)
 
-            # Filter sequences based on volume criteria
-            if lower_threshold < volume < upper_threshold:
-                if seq.count('G') <= 1:
-                    yield ''.join(seq), volume  # Yield the sequence and its volume
+        # Sum volumes
+        volumes = vol_array.sum(axis=1)
+
+        # Filter by target range
+        lower = target
+        upper = target + tolerance
+        mask = (volumes > lower) & (volumes < upper)
+
+        # Apply mask to filter sequences + volumes
+        valid_seqs = aa_array[mask]
+        valid_volumes = volumes[mask]
+        print(layer_info)
+        print(f'This layer has {len(valid_seqs)} sequences.')
+
+        return [(''.join(seq), int(vol)) for seq, vol in zip(valid_seqs, valid_volumes)]
                     
-    def update_sequence(self, start_seq, positions, amino_acids):
-        """Updates the starting sequence at specified positions with given amino acids."""
-        seq_list = list(start_seq)
-        for aa, pos in zip(amino_acids, positions):
-            seq_list[pos - 1] = aa  # Adjust for 0-based index
-        return ''.join(seq_list)
-
-    def sequence_generator(self, starting_seq, seqs, design_idx):
+    def sequence_generator(self, seqs):
         
         logging.info(f'Generating sequence library...')
         
@@ -191,117 +354,13 @@ class RASSCoL:
         for seq_id, sequence_combination in enumerate(product(*seqs.values())):
             combined_seq = ''.join(seq_info[0] for seq_info in sequence_combination)
             volumes = [seq_info[1] for seq_info in sequence_combination]
-            modified_seq = self.update_sequence(starting_seq, design_idx, combined_seq)
-            seq_dict[seq_id] = {'pocket_seq': combined_seq, 'full_seq': modified_seq, 'volume':volumes}
+            seq_dict[seq_id] = {'pocket_seq': combined_seq, 'volume':volumes}
             
         return seq_dict
 
-    def repack_pdb(self,input_path: Path, output_pdb_path: Path, seq: str = None, \
-            rm_seq_txt: bool = True, faspr_path: Path = Path('/opt/FASPR/FASPR')):
 
-        # Construct the command for subprocess
-        repack_cmd = [faspr_path, '-i', str(input_path), '-o', str(output_pdb_path)]
-        
-        # Write the sequence to a file if provided and append path to command
-        if seq != None:
-            repack_seq_path = output_pdb_path.with_suffix('.seq')
-            repack_seq_path.write_text(seq)
-            repack_cmd.extend(['-s', str(repack_seq_path)])
-        
-        # Execute the command
-        subprocess.run(repack_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        # Delete sequence files if unwanted
-        if rm_seq_txt and repack_seq_path.is_file():
-            repack_seq_path.unlink()
-
-    def receptor_pdb2pdbqt(self, receptor_pdb_path, receptor_pdbqt_path, obabel_path):
-        obabel_cmd=f'{obabel_path} -ipdb {receptor_pdb_path} -opdbqt --addpolarh -xr -O {receptor_pdbqt_path}'
-        subprocess.run(obabel_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-
-    def quick_vina(self, receptor_pdbqt_path:Path,  ligand_pdbqt_path:Path, output_pdbqt_path:Path, \
-            center_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0), box_size: list[float, float, float] = [20, 20, 20], \
-            do_quick: bool = True) -> float:
-
-        # Initialise Vina with specified parameters
-        v = vina.Vina(sf_name='vina', seed=42, verbosity=0, cpu=1)
-        
-        # Load in receptor and ligand, converting to strings if necessary
-        v.set_receptor(str(receptor_pdbqt_path))
-        v.set_ligand_from_file(str(ligand_pdbqt_path))
-
-        # Generate affinity map around the specified center
-        if do_quick:
-            v.compute_vina_maps(center=center_xyz, box_size=box_size, spacing=0.5)
-            v.dock(exhaustiveness=1, n_poses=1, max_evals=5_000)
-
-        else:
-            v.compute_vina_maps(center=center_xyz, box_size=box_size)
-            v.dock(exhaustiveness=16, n_poses=1, max_evals=10_000)
-
-        # Retrieve the total score of the first pose
-        vina_score = v.energies(n_poses=1)[0][0]
-        
-        # Save best pose
-        v.write_poses(str(output_pdbqt_path), n_poses=1, overwrite=True)
-            
-        # Return the total score of the first pose, scaling to avoid very positive numbers due to clashed(e.g. 10e6, bad for ML)
-        if vina_score<1:
-            return vina_score
-        else:
-            return math.log10(vina_score)
-    
-    def calc_lig_dist_from_pocket(self, docked_pdbqt_path:Path, pocket_centroid:list) -> float:
-        dock_coords = get_pdbqt_coords(docked_pdbqt_path)
-        dock_centroid = get_centroid(dock_coords)
-        return euclidean_distance(pocket_centroid, dock_centroid)
-    
-    def calc_vol_metrics(self, volumes, parent_volume, total_ligand_volume):
-        # Calculate side-chain volumes
-        total_side_chain_vol = sum(volumes)
-
-        # Calculate cavity volume and ligand fraction 
-        cavity_vol = parent_volume - total_side_chain_vol
-        cavity_lig_frac = cavity_vol / total_ligand_volume
-        
-        return total_side_chain_vol, cavity_vol, cavity_lig_frac
-
-    # Global lock to be inherited by worker processes
-    csv_lock = None
-
-    # Set up logging to a file only (no console output)
-    def setup_logger(self, log_file):
-        logger = logging.getLogger()  # Get the root logger
-        logger.setLevel(logging.INFO)  # Set log level
-        
-        # Remove existing handlers to avoid duplicate logs
-        if logger.hasHandlers():
-            logger.handlers.clear()
-        
-        # Create a file handler for logging to a file
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.INFO)
-        
-        # Create a console handler for logging to STDOUT
-        console_handler = logging.StreamHandler(sys.stdout) 
-        console_handler.setLevel(logging.INFO)
-        
-        # Define the logging format
-        formatter = logging.Formatter('%(asctime)s - %(processName)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        
-        # Add both handlers to the logger
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-        
-    # Thread-safe CSV writing function
-    def write_to_csv(self, file_path, row):
-        with csv_lock:  # Ensure only one process writes at a time
-            with open(file_path, 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(row)
-    
-    def vina_worker(self, seq_id, seq_dict, config_run, log_file, csv_file):
+    @staticmethod
+    def run_job(seq_id, seq_dict, config_run, log_file, csv_file, aa_vol, csv_lock):
         """
         Worker function for docking and data collection.
 
@@ -310,87 +369,64 @@ class RASSCoL:
             config (dict): Configuration dictionary for run.
             log_file (Path): Path to the log file.
             csv_file (Path): Path to the CSV file.
+            aa_vol (dict): Amino acid volume data.
+            parent_volume (float): Parent volume.
+            total_ligand_volume (float): Total ligand volume.
+            csv_lock (Lock): CSV lock for thread-safe writing.
 
         Returns:
             None
         """
+
+        job = VinaJob(
+                seq_id,
+                seq_dict,
+                config_run,
+                log_file,
+                csv_file,
+                aa_vol,
+                csv_lock
+            )
+        job.run()
+
+    def run_parallel(self, config, slice=None):
         
-        # read variables from config
-        combined_seq =  seq_dict['pocket_seq']               # Short sequence (pocket sequence)
-        modified_seq = seq_dict['full_seq']                  # Long sequence (full sequence)
-        volumes = seq_dict['volume']                         # Volumes associated with the sequence
-        scaffold = Path(config_run['receptor_path'])         # Scaffold path
-        ligand = Path(config_run['ligand_path'])             # Ligand path
-        pocket_centroid = config_run['pocket_ca_centroid']   # Pocket centroid
-        num_lig_atoms = config_run['num_lig_atoms']          # Number of ligand atoms
-        output_dir = Path(config_run['output_directory'])    # Output directory
-        cube_side_length = config_run['cube_side_length']    # The cube side length of the docking grid. 
-        faspr_path = Path(config_run['FASPR_path'])
-        obabel_path = Path(config_run['obabel_path'])
+        with Manager() as manager:
+            csv_lock = manager.Lock()
 
-        # Set up logging inside each worker
-        self.setup_logger(log_file)
-                
-        # generate file path variables
-        packed_pdb_path = output_dir / f'{seq_id}.pdb'
-        packed_pdbqt_path = packed_pdb_path.with_suffix('.pdbqt')
-        docked_pdbqt_path = output_dir / f'{packed_pdb_path.stem}_{ligand.stem}.pdbqt'
+            log_file = Path(config['run']['output_directory']) / 'RASSCoL_log.log'
+            csv_file = Path(config['run']['output_directory']) / 'RASSCoL_results.csv'
 
-        try:
-            # Perform docking
-            self.repack_pdb(scaffold, packed_pdb_path, modified_seq, faspr_path=faspr_path)
-            self.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path, obabel_path=obabel_path)
-            vina_score = self.quick_vina(packed_pdbqt_path, ligand, docked_pdbqt_path, pocket_centroid, cube_side_length)
+            if not csv_file.exists():
+                with csv_lock:
+                    with open(csv_file, 'w', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['id', 'pocket_seq', 'vina_score', 'vina_score_norm', 'distance_from_pocket', 'sc_vol', 'cavity_vol', 'cavity_ligand_frac'])
+
+
+            # Prepare arguments for starmap execution
+            run_config = config['run']
+            job_ids = slice if slice is not None else config['seqs'].keys()
+
+            args = (
+                (
+                    seq_id,
+                    config['seqs'][seq_id],
+                    config['run'],
+                    log_file,
+                    csv_file,
+                    self.aa_vol,
+                    csv_lock
+                )
+                for seq_id in job_ids
+            )
+
+            # Using starmap to run jobs in parallel
+            with Pool(config['run']['num_cpus']) as pool:
+                pool.starmap(RASSCoL.run_job, args)
+
+        print("All jobs completed")
             
-            # Calculate other scores
-            vina_score_norm = round(vina_score / num_lig_atoms, 3)
-            dist_from_pocket = self.calc_lig_dist_from_pocket(docked_pdbqt_path, pocket_centroid)
-            total_side_chain_vol, cavity_vol, cavity_lig_frac = self.calc_vol_metrics(volumes, parent_volume, total_ligand_volume)
-
-            # Write to CSV file in a thread-safe manner
-            self.write_to_csv(csv_file, [seq_id, modified_seq, combined_seq, vina_score, vina_score_norm, dist_from_pocket, total_side_chain_vol, cavity_vol, cavity_lig_frac])
-
-            logging.info(f'Job {seq_id} ({combined_seq}) finished with vina_score (norm): {round(vina_score,3)} ({vina_score_norm})')
-
-        except Exception as e:
-            logging.error(f'Error in job {seq_id}: {e}')
-            
-        # delete unwanted files
-        packed_pdb_path.unlink()
-        packed_pdbqt_path.unlink()
-        docked_pdbqt_path.unlink()
-
-    def run_parallel(self, starting_seq, design_idx, config, slice=None):
-        
-        # define global variables to be used for each run
-        global csv_lock  # Declare the global lock
-        csv_lock = Lock()  # Initialize the lock once, before starting the pool
-        
-        global parent_volume  
-        parent_volume = sum(self.aa_vol[resname] for resnum, resname in enumerate(starting_seq, start=1) if resnum in design_idx)
-        
-        global total_ligand_volume # Declare the total ligand volume for all layers
-        total_ligand_volume = sum(config['design'][layer]['ligand_layer_vol'] for layer in config['design'])
-        
-        # Initialize logging
-        log_file = Path(config['run']['output_directory']) / 'RASSCoL_log.log'
-        self.setup_logger(log_file)
-
-        # Initialize CSV file with headers
-        csv_file = Path(config['run']['output_directory']) / 'RASSCoL_results.csv'
-        
-        if not csv_file.exists():
-            self.write_to_csv(csv_file, ['id', 'seq', 'pocket_seq', 'vina_score', 'vina_score_norm', 'distance_from_pocket', 'sc_vol', 'cavity_vol', 'cavity_ligand_frac'])
-
-        # Prepare arguments for starmap
-        if slice is not None:
-            args = [(seq_id, config['seqs'][seq_id], config['run'], log_file, csv_file) for seq_id in slice]
-        else:
-            args = [(seq_id, config['seqs'][seq_id], config['run'], log_file, csv_file) for seq_id in config['seqs']]
-
-        # Multiprocessing execution
-        with Pool(config['run']['num_cpus']) as pool:
-            pool.starmap(self.vina_worker, args)
             
     def save_structures(self, config:dict, results_csv_path:Path):
 
@@ -409,16 +445,16 @@ class RASSCoL:
             packed_pdb_path = Path(config['run']['output_directory']) / f"{row['id']}.pdb"
             packed_pdbqt_path = packed_pdb_path.with_suffix('.pdbqt')
             docked_pdbqt_path = Path(config['run']['output_directory']) / f"{packed_pdb_path.stem}_{Path(config['run']['ligand_path']).stem}.pdbqt"
-            
-            self.repack_pdb(Path(config['run']['receptor_path']), packed_pdb_path, row['seq'], faspr_path=config['run']['FASPR_path'])
-            self.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path, obabel_path=config['run']['obabel_path'])
-            _ = self.quick_vina(packed_pdbqt_path, Path(config['run']['ligand_path']), docked_pdbqt_path, config['run']['pocket_ca_centroid'], config['run']['cube_side_length'])
+            seq = VinaJob.update_sequence(config['run']['starting_seq'], config['run']['design_idx'], row['pocket_seq'])
+            VinaJob.repack_pdb(Path(config['run']['receptor_path']), packed_pdb_path, seq, faspr_path=config['run']['FASPR_path'])
+            VinaJob.receptor_pdb2pdbqt(packed_pdb_path, packed_pdbqt_path, obabel_path=config['run']['obabel_path'])
+            _ = VinaJob.quick_vina(packed_pdbqt_path, Path(config['run']['ligand_path']), docked_pdbqt_path, config['run']['pocket_ca_centroid'], config['run']['cube_side_length'])
             
             # delete unwanted files
             packed_pdb_path.unlink() 
             print(f"Saved design {row['id']} at {config['run']['output_directory']}/{row['id']}_{Path(config['run']['ligand_path']).stem}.pdbqt")
 
-    def run_active_sampling(self, starting_seq, design_idx, config, stopping_patience = None, verbose = 0):
+    def run_active_sampling(self, config, stopping_patience = None, verbose = 0):
 
         csv_file = Path(config['run']['output_directory']) / 'RASSCoL_results.csv'
 
@@ -426,55 +462,38 @@ class RASSCoL:
         final_num_designs = config['run']['gradient_boosted_top_sequences']
         steps = config['run']['gradient_boosted_steps']
 
-        #2% of the entire sequence space sampled at a time
-        step_size = int(len(config['seqs'])*0.02)
-
+        step_size = config['run']['gradient_boosted_step_size']
 
         num_models = 10  # Number of models to train in the ensemble, 10 was found to save training time but give good uncertainty values
+
         # make a dataframe from the config, easier to track sampling process this way
+        #expand sequences into training variables
+        tmp_array = np.array([list(entry['pocket_seq']) + list(map(int, entry['volume'])) for entry in config['seqs'].values()])
 
-        df_seqs = pd.DataFrame(config['seqs']).T
-
-        # split up the pocket sequences into one residue per column
-        # dropping the first and last column as these will be empty strings ('')
-        # (N seqs x N pocket residues)
-        df_pocket_exploded = df_seqs['pocket_seq'].str.split('', expand=True).iloc[:,1:-1]
-
-        # rename columns
-        df_pocket_exploded.columns = [f's{n}' for n in range(df_pocket_exploded.shape[1])]
-
-        # split up layer volumes into columns (N seqs x N layers)
-        vol_cols = [f'v{n}' for n in range(len(df_seqs.loc[0,'volume']))]
-        df_volume_exploded = pd.DataFrame(df_seqs.volume.tolist(), index=df_seqs.index, columns=vol_cols)
-
-        # join the sequence and volume dataframes (N seqs x (N layers + N pocket residues))
-        df_rf = pd.concat([df_pocket_exploded, df_volume_exploded], axis=1)
+        num_residues = len(config['seqs'][0]['pocket_seq'])
+        num_layers = len(config['seqs'][0]['volume'])
+        columns = [f's{i}' for i in range(num_residues)] + [f'v{i}' for i in range(num_layers)]
+        df_rf = pd.DataFrame(tmp_array, columns=columns)
 
         df_rf['Docking'] = 0.
 
         seq_ids = list(df_rf.index)
 
         #shuffle the dataset, select training and testing sets
-        seq_ids, train_index = sample_and_remove(seq_ids, round(step_size*0.8))
-        seq_ids, mse_index = sample_and_remove(seq_ids, round(step_size*0.2))
+        seq_ids, train_index = sample_and_remove(seq_ids, round(step_size))
+        seq_ids, mse_index = sample_and_remove(seq_ids, round(step_size))
 
-        self.run_parallel(starting_seq, design_idx, config, [int(x) for x in train_index])
-        self.run_parallel(starting_seq, design_idx, config, [int(x) for x in mse_index])
+        print('Datasets ready, starting active sampling!')
+        self.run_parallel(config,train_index)
+        self.run_parallel(config,mse_index)
 
         results_df = pd.read_csv(csv_file, index_col='id')
         results_df.index = results_df.index.astype(int)
 
         # Update training data with new docking scores
-        print(results_df.loc[train_index, 'vina_score'])
-        print('\n')
-        print(df_rf.loc[train_index, 'Docking'])
 
         df_rf.loc[train_index, 'Docking'] = results_df.loc[train_index, 'vina_score']
         df_rf.loc[mse_index, 'Docking'] = results_df.loc[mse_index, 'vina_score']
-        #damped positive values to ensure smoother training
-        df_rf.Docking[df_rf.Docking>0]=np.log(df_rf.Docking[df_rf.Docking>0])
-
-        print(df_rf.loc[train_index, 'Docking'])
 
         mse_list = []
 
@@ -483,7 +502,7 @@ class RASSCoL:
         open_sampling_log = open(sampling_log_file, 'w')
 
         if stopping_patience is None:
-            warnings.warn('stopping_patience = None, validation set will be merged with the training set')
+            warnings.warn('stopping_patience = None')
 
         # ------------------------- Main Loop -------------------------
 
@@ -491,14 +510,11 @@ class RASSCoL:
             print(f'\nStarting Step {i + 1}/{steps}')
 
             # Prepare training and test datasets
-            if stopping_patience is not None:
-                df_train = df_rf.loc[train_index]
-                df_mse = df_rf.loc[mse_index]
-            else:
-                df_train = df_rf.loc[np.concatenate((train_index, mse_index))]
+
+            df_train = df_rf.loc[train_index]
+            df_mse = df_rf.loc[mse_index]
             
             df_test = df_rf.drop(np.concatenate((train_index, mse_index)))
-            df_mse = df_rf.loc[mse_index]
             
             # Drop the "Predictions" column if it exists
             features = [col for col in df_train.columns if col not in ['Docking', 'Predictions', 'Predictions_std']]
@@ -529,25 +545,19 @@ class RASSCoL:
                     return tf.math.reduce_mean(predictions, axis=1), tf.math.reduce_std(predictions, axis=1)
 
             combined_model = CombinedModel()
-
-            # ------------------------- Linear Scaling for Predictions -------------------------
-
-            print('Calibrating model predictions to align with experimental docking scores...')
             train_predictions, _ = combined_model.predict(train_ds)
-            #coef = np.polyfit(train_predictions.flatten(), df_train['Docking'].values, 1)
-            #scaling_function = np.poly1d(coef)
 
             # ------------------------- Evaluate on MSE Dataset -------------------------
 
+            mse_predictions_scaled, mse_predictions_std = combined_model.predict(mse_ds)
+            mse = np.mean(np.square(mse_predictions_scaled - df_mse['Docking'].values))
+
+            mse_list.append(mse)
+            open_sampling_log.write(f'Step {i + 1} validation MSE: {mse:.4f}')
+
+            # Check for early stopping
             if stopping_patience is not None:
-                mse_predictions_scaled, _ = combined_model.predict(mse_ds)
-                #mse_predictions_scaled = scaling_function(mse_predictions.flatten())
-                mse = np.mean(np.square(mse_predictions_scaled - df_mse['Docking'].values))
 
-                mse_list.append(mse)
-                open_sampling_log.write(f'Step {i + 1} validation MSE: {mse:.4f}')
-
-                # Check for early stopping
                 if i >= stopping_patience and all(x > mse for x in mse_list[-stopping_patience:]):
                     print(f'Stopping early after {i + 1} steps due to no improvement in MSE.')
                     break
@@ -555,54 +565,51 @@ class RASSCoL:
             # ------------------------- Active Sampling -------------------------
 
             test_predictions_scaled, prediction_std = combined_model.predict(test_ds)
-            #test_predictions_scaled = scaling_function(test_predictions.flatten())
-
-            mse = np.mean(np.square(test_predictions_scaled - df_test['Docking'].values))
-            open_sampling_log.write(f'Step {i + 1} validation MSE: {mse:.4f}')
 
             # Save predictions
-            df_rf.loc[df_test.index, 'Predictions'] = test_predictions_scaled
-            df_rf.loc[df_test.index, 'Predictions_std'] = prediction_std
+            df_test['Predictions'] = test_predictions_scaled
+            df_test['Predictions_std'] = prediction_std
 
             # Select samples for the next round
-            worst_index = df_rf.nlargest(round(step_size * 0.25), 'Predictions_std').index  # High uncertainty
-            best_index = df_rf.nsmallest(round(step_size * 0.25), 'Predictions').index  # Best docking scores
+            worst_index = df_test.nlargest(round(step_size * 0.25), 'Predictions_std').index  # High uncertainty
+            best_index = df_test.nsmallest(round(step_size * 0.25), 'Predictions').index  # Best docking scores
 
             # Combine worst and best indices, ensuring no duplicates
             combined_index = worst_index.union(best_index)
 
-            # Exclude indices already in df_train to avoid duplicates
-            allowed_sample_space = df_rf.index.difference(df_train.index.union(combined_index))
+            # Exclude indices already in combined_index to avoid duplicates
+            allowed_sample_space = df_test.index.difference(combined_index)
 
-            # Randomly sample from the allowed sample space
-            random_index = allowed_sample_space.to_series().sample(n=round(step_size * 0.5), random_state=seed).index
+            # Randomly sample from the allowed sample space, sometime best and least certain data points overlap - random fraction needs to be adjusted
+            random_index = allowed_sample_space.to_series().sample(n=round(step_size-len(combined_index)), random_state=seed).index
 
             # Final combined index with worst, best, and random samples
-            final_combined_index  = pd.Index(worst_index).union(best_index).union(random_index).unique()
+            final_combined_index  = pd.Index(combined_index).union(random_index)
+            #sanity check final_combined_index = new_test_index
             new_test_index = list(final_combined_index.difference(results_df.index))
+            print(len(final_combined_index),len(new_test_index))
 
             # ------------------------- Dock New Samples -------------------------
 
             print(f'Docking {len(new_test_index)} new samples...')
-            self.run_parallel(starting_seq, design_idx, config, [int(x) for x in new_test_index])
+            self.run_parallel(config,new_test_index)
 
             results_df = pd.read_csv(csv_file, index_col='id')
             results_df.index = results_df.index.astype(int)
 
             # Update training data with new docking scores
             df_rf.loc[new_test_index, 'Docking'] = results_df.loc[new_test_index, 'vina_score']
-            #damped positive values to ensure smoother training
-            df_rf.Docking[df_rf.Docking>0]=np.log(df_rf.Docking[df_rf.Docking>0])
-            train_index = list(set(train_index + new_test_index))
+            train_index = np.unique(np.concatenate((train_index,new_test_index)))
     
     # ----------------------------- Dock Best predictions -----------------------
 
         #prevent redocking already sampled sequences
-        allowed_sample_space = df_rf.index.difference(train_index)
-        best_index = df_rf.nsmallest(final_num_designs, 'Predictions').index
-        self.run_parallel(starting_seq, design_idx, config, [int(x) for x in best_index])
+        best_index = df_test.nsmallest(final_num_designs, 'Predictions').index
+        self.run_parallel(config,best_index)
+        df_test.to_csv(Path(config['run']['output_directory']) / 'RASSCoL_DF_test.csv')
+
+        df_mse['Predictions'] = mse_predictions_scaled
+        df_mse['Predictions_std'] = mse_predictions_std
+        df_mse.to_csv(Path(config['run']['output_directory']) / 'RASSCoL_DF_validate.csv')
 
         open_sampling_log.close()
-
-
-

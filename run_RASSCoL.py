@@ -1,10 +1,10 @@
-
 # local modules
 from rasscol_src.rasscol_utils import *
 from rasscol_src.general_utils import *
 
 # builtin modules
 import multiprocessing
+multiprocessing.set_start_method('fork')
 import json, sys
 
 import argparse
@@ -32,8 +32,11 @@ def main():
     parser.add_argument('-j','--gradient_boosted_top_sequences', type=int, default=100000,
                         help='Number of sequences to sample after training gradient booseted trees (default: 100 000)')
 
-    parser.add_argument('-e','--gradient_boosted_steps', type=int, default=10,
+    parser.add_argument('-e','--gradient_boosted_steps', type=int, default=20,
                         help='Number of steps to perform active sampling (default: 10)')
+
+    parser.add_argument('-w','--gradient_boosted_step_size', type=int, default=20000,
+                        help='Number of sequences to perform active sampling step (default: 20000)')
     
     parser.add_argument('-f', '--faspr_path', type=Path, default=Path('/opt/FASPR/FASPR'),
                         help='Path to the FASPR executable (default: /opt/FASPR/FASPR)')
@@ -74,9 +77,12 @@ def main():
 
     if results_csv.exists():
         if args.overwrite:
-            log_file.unlink()
-            results_csv.unlink()
-            sampling_file.unlink()
+            if log_file.exists():
+                log_file.unlink()
+            if results_csv.exists():
+                results_csv.unlink()
+            if sampling_file.exists():
+                sampling_file.unlink()
         else:
             warnings.warn('RASSCoL_results.csv already exists! Rename it to prevent data loss.')
             return 0
@@ -128,11 +134,13 @@ def main():
             'timestamp': timestamp,
             'calc_seqs_only': args.calc_seqs_only,
             'cube_side_length': [lig_length*1.5]*3,
-            'timeout':args.timeout
+            'timeout':args.timeout,
+            'design_idx':design_idx,
+            'starting_seq':starting_seq,
+            'gradient_boosted_step_size':args.gradient_boosted_step_size
         },
         'versions':{
             'python':sys.version.split()[0],
-            'vina':rasscol.vina_version 
         },
         'design':design_config
     }
@@ -141,6 +149,8 @@ def main():
     pocket_ca_coords = [xyz for i, xyz in enumerate(scaffold_ca_coords, start=1) if i in design_idx]
     config['run']['pocket_ca_centroid'] = get_centroid(pocket_ca_coords)
     config['run']['num_lig_atoms']  = len(lig_coords)
+    config['run']['parent_volume'] = sum([rasscol.aa_vol[resname] for resnum, resname in enumerate(starting_seq, start=1) if resnum in design_idx])
+    config['run']['total_ligand_volume'] = sum(config['design'][layer]['ligand_layer_vol'] for layer in config['design'])
 
     # Generate the sequence generators dictionary
     seqs = {
@@ -150,19 +160,16 @@ def main():
             design_config[layer]['tolerance'],
         ) for layer in design_config
     }
-
-    seq_dict = run_with_timeout(rasscol.sequence_generator, starting_seq, seqs, design_idx, timeout=config['run']['timeout'])
+    seq_dict = run_with_timeout(rasscol.sequence_generator, seqs, timeout=config['run']['timeout'])
     config['seqs'] = seq_dict
-    
+    print(f'Sequences generated: {len(seq_dict)}')
     # write out config for logging
     with config_json_path.open('w') as f:
         json.dump(config, f, indent=4)
     
-    print(f'Sequences generated: {len(seq_dict)}')
-
     if config['run']['use_gradient_boosted_trees']:
         
-        seqs_to_be_sampled=int(config['run']['gradient_boosted_top_sequences']+config['run']['gradient_boosted_steps']*len(seq_dict)*0.02)
+        seqs_to_be_sampled=int(config['run']['gradient_boosted_top_sequences']+config['run']['gradient_boosted_steps']*config['run']['gradient_boosted_step_size'])
         if seqs_to_be_sampled>len(seq_dict):
             warnings.warn(f'Gradient boosted trees requested but the total number of sequences is less than the requested sampled sequences\nGradient boosted trees switched off, performing exhaustive search!')
             config['run']['use_gradient_boosted_trees']=False
@@ -171,11 +178,10 @@ def main():
         return
 
     elif config['run']['use_gradient_boosted_trees']:
-        rasscol.run_active_sampling(starting_seq, design_idx, config)
+        rasscol.run_active_sampling(config)
 
     else:
-        rasscol.run_parallel(starting_seq, design_idx, config)
-        
+        rasscol.run_parallel(config)
 
     
     # Read CSV data and store it in a list of dictionaries

@@ -1,0 +1,30 @@
+{
+    "1": {
+        "res_info": {
+            "12": "IVSN",
+            "16": "IVSN",
+            "51": "IVSN",
+            "84": "IVSN",
+            "118": "IVSN",
+            "80": "IVSN"
+        },
+        "cavity": 0,
+        "tolerance": 20,
+        "ligand_layer_vol": 194
+    
+},
+    "2": {
+        "res_info": {
+            "19": "IVSN",
+            "44": "IVSN",
+            "111": "IVSN",
+            "114": "IVSN",
+            "47": "IVSN",
+            "87": "IVSN"
+        },
+        "cavity": 0,
+        "tolerance": 20,
+        "ligand_layer_vol": 194
+
+    }
+}
