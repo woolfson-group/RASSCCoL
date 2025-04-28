@@ -1,0 +1,41 @@
+REMARK  Name = ../example/ligands/nile_red.pdb
+REMARK  3 active torsions:
+REMARK  status: ('A' for Active; 'I' for Inactive)
+REMARK    1  A    between atoms: C2_2  and  N1_3
+REMARK    2  A    between atoms: N1_3  and  C3_4
+REMARK    3  A    between atoms: N1_3  and  C5_6
+REMARK                            x       y       z     vdW  Elec       q    Type
+REMARK                         _______ _______ _______ _____ _____    ______ ____
+ROOT
+ATOM      1  C5  NRD     1       3.329  -0.375   0.648  0.00  0.00    +0.000 A 
+ATOM      2  C6  NRD     1       2.472   0.547   0.024  0.00  0.00    +0.000 A 
+ATOM      3  C7  NRD     1       1.090   0.344   0.013  0.00  0.00    +0.000 A 
+ATOM      4  C8  NRD     1       0.546  -0.804   0.640  0.00  0.00    +0.000 A 
+ATOM      5  C9  NRD     1       1.392  -1.722   1.264  0.00  0.00    +0.000 A 
+ATOM      6  C10 NRD     1       2.773  -1.507   1.268  0.00  0.00    +0.000 A 
+ATOM      7  N2  NRD     1      -0.797  -1.008   0.633  0.00  0.00    +0.000 NA
+ATOM      8  C11 NRD     1      -1.623  -0.117   0.028  0.00  0.00    +0.000 A 
+ATOM      9  C12 NRD     1      -3.012  -0.284  -0.005  0.00  0.00    +0.000 A 
+ATOM     10  C13 NRD     1      -3.618  -1.398   0.595  0.00  0.00    +0.000 A 
+ATOM     11  C14 NRD     1      -5.005  -1.555   0.556  0.00  0.00    +0.000 A 
+ATOM     12  C15 NRD     1      -5.799  -0.601  -0.083  0.00  0.00    +0.000 A 
+ATOM     13  C16 NRD     1      -5.210   0.513  -0.686  0.00  0.00    +0.000 A 
+ATOM     14  C17 NRD     1      -3.818   0.688  -0.657  0.00  0.00    +0.000 A 
+ATOM     15  C18 NRD     1      -3.228   1.816  -1.268  0.00  0.00    +0.000 A 
+ATOM     16  O1  NRD     1      -3.944   2.678  -1.845  0.00  0.00    +0.000 OA
+ATOM     17  C19 NRD     1      -1.842   1.999  -1.244  0.00  0.00    +0.000 A 
+ATOM     18  C20 NRD     1      -1.020   1.070  -0.616  0.00  0.00    +0.000 A 
+ATOM     19  O2  NRD     1       0.296   1.228  -0.585  0.00  0.00    +0.000 OA
+ENDROOT
+BRANCH   1  20
+ATOM     20  N1  NRD     1       4.757  -0.158   0.660  0.00  0.00    +0.000 N 
+BRANCH  20  22
+ATOM     21  C1  NRD     1       5.386   0.974  -1.410  0.00  0.00    +0.000 C 
+ATOM     22  C2  NRD     1       5.345   1.056   0.105  0.00  0.00    +0.000 C 
+ENDBRANCH  20  22
+BRANCH  20  23
+ATOM     23  C3  NRD     1       5.655  -1.055   1.380  0.00  0.00    +0.000 C 
+ATOM     24  C4  NRD     1       5.873  -2.329   0.584  0.00  0.00    +0.000 C 
+ENDBRANCH  20  23
+ENDBRANCH   1  20
+TORSDOF 3

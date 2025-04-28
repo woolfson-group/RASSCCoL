@@ -1,0 +1,3 @@
+vina==1.2.5
+ipykernel==6.19.2
+rdkit==2023.9.5
