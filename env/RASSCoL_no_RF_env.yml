@@ -1,4 +1,4 @@
-name: RASSCoL_no_RF_env        
+name: RASSCCoL_no_RF_env        
 channels:
   - conda-forge               
   - defaults                  
@@ -9,3 +9,7 @@ dependencies:
       - vina==1.2.5            
       - ipykernel==6.19.2
       - rdkit==2023.09.5
+      - pandas==2.2.1
+      - tensorflow==2.16.1
+      - tensorflow_decision_forests==1.9.0
+      
