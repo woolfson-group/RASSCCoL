@@ -6,12 +6,12 @@ Active Sampling using Gradient Boosted trees is an experimental feature, and is 
 
 ## Installation
 
-This code requires a small number of external libraries (see `env/RASSCCoL_no_RF_env.yml`) and was tested using Python 3.9.18.
+This code requires a small number of external libraries (see `env/RASSCCoL_env.yml`) and was tested using Python 3.9.18.
 
 To set up the environment, run:
 
 ```bash
-conda env create -f env/RASSCCoL_no_RF_env.yml
+conda env create -f env/RASSCCoL_env.yml
 ```
 
 To prepare files for AutoDock Vina, Open Babel is needed. [See here for installation](https://openbabel.org/docs/Installation/install.html#install-binaries)
