@@ -93,7 +93,7 @@ def get_pdbqt_coords(pdbqt_path: str, ca_only:bool=False) -> list:
     pdb_path (str): Path to the PDB file.
 
     Returns:
-    np.ndarray: A NumPy array with shape (n_atoms, 3) containing x, y, z coordinates of all atoms.
+    np.ndarray: list of lists with shape (n_atoms, 3) containing x, y, z coordinates of all atoms.
     """
     # Initialise a list to store coordinates
     coords = []

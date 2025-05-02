@@ -6,12 +6,13 @@ Active Sampling using Gradient Boosted trees is an experimental feature, and is 
 
 ## Installation
 
-This code requires a small number of external libraries (see `env/RASSCCoL_no_RF_env.yml`) and was tested using Python 3.9.18.
+This code requires a small number of external libraries (see `env/RASSCCoL_env.yml`) and was tested using Python 3.9.18.
 
 To set up the environment, run:
 
 ```bash
-conda env create -f env/RASSCCoL_no_RF_env.yml
+conda env create -f env/RASSCCoL_env.yml
+conda activate RASSCCoL_env
 ```
 
 To prepare files for AutoDock Vina, Open Babel is needed. [See here for installation](https://openbabel.org/docs/Installation/install.html#install-binaries)
@@ -20,56 +21,124 @@ To prepare files for AutoDock Vina, Open Babel is needed. [See here for installa
 
 The minimum required options are:
 
-1. Receptor PDB path (`-r, --receptor_pdb_path`)
-2. Ligand PDBQT path (`-l, --ligand_pdbqt_path`)
-3. Design config JSON path (`-d, --design_config_json_path`)
-4. Directory to save the output (`-o, --output_directory`)
+1. Receptor PDB path (`--receptor_pdb_path`)
+2. Ligand SMILES string (`--ligand_smiles`)
+3. Design info TXT path (`--design_info_path`)
+4. Directory to save the output (`--output_directory`)
 
-First I suggest you run the example to test installation (~ 5 minutes):
+First I suggest you run the examples to test installation, navigate to the RASSCCoL directory (where this README is located) and run the commands below.
+
+No random forest active sampling test (~  2 minutes):
 
 ```bash
-python run_RASSCCoL.py \
-    -r ./example/scapCC4_NRD/scapCC4.pdb \
-    -l ./example/scapCC4_NRD/NileRed.pdbqt \
-    -d ./example/scapCC4_NRD/design_config.json \ 
-    -o ./example/scapCC4_NRD/
+bash helper_scripts/run_no_RF_test.sh
+```
+
+Random forest active sampling test (~ 15 minutes):
+
+```bash
+bash helper_scripts/run_RF_test.sh
 ```
 
 There are several options you can manipulate for RASSCCoL, see [Running options](#running-options).
 
 For help setting up the ligand and the design configuration, see `./notebooks/01_RASSCCoL_ligand_prep.ipynb` and `./notebooks/02_RASSCCoL_design_prep.ipynb` respectively.
 
+## Design info
+
+RASSCCoL split proteins/ligands up into layers to match shape. In order to do this the designer needs to pick out layers in their protein. This information is passed as a text file. An example is shown below:
+
+```text
+    1 0 20 110
+    19 AILV
+    44 AILV
+    111 AILV
+
+    2 0 20 110
+    16 AILV
+    84 AILV
+    114 AILV
+
+    3 0 20 110
+    12 AILV
+    51 AILV
+    118 AILV
+```
+
+The expected format is:
+
+```text
+    <layer> <cavity> <tolerance> <lig_layer_vol>
+    <resnum> <aaset>
+    ...
+```
+
+With layers separated by empty lines.
+
+>**Note**: the resnum corresponds to the 1-based index of residues in the PDB file
+
+### Bypassing the layer approach
+
+Layers can be bypassed by simply putting all of the intended pocket residues into one layer. Whilst this does work, we found splitting ligands into layers reduced the sequence space and therefore reduced compute. An example of this can be seen below (note the ligand layer volume is now the total ligand volume):
+
+```text
+    1 0 20 330
+    19 AILV
+    44 AILV
+    111 AILV
+    16 AILV
+    84 AILV
+    114 AILV
+    12 AILV
+    51 AILV
+    118 AILV
+```
+## Known limitations
+
+- Currently the code only works on monomeric proteins.
+
 ### Running options
 
 For see below for full list, or use `python run_RASSCCoL.py - h`.
 
 ```text
-usage: run_RASSCCoL.py [-h] -o OUTPUT_DIRECTORY -r RECEPTOR_PDB_PATH -l LIGAND_PDBQT_PATH -d DESIGN_CONFIG_JSON_PATH [-g] [-f FASPR_PATH] [-b OBABEL_PATH] [-n NUM_CPUS] [-s SAVE_TOP_N] [-c]
-                      [-t TIMEOUT]
+usage: run_RASSCCoL.py [-h] --output_directory OUTPUT_DIRECTORY --receptor_pdb_path RECEPTOR_PDB_PATH --ligand_smiles LIGAND_SMILES --design_info_path DESIGN_INFO_PATH [--ligand_name LIGAND_NAME] [--ligand_3letter LIGAND_3LETTER] [--use_gradient_boosted_trees]
+                       [--gradient_boosted_top_sequences GRADIENT_BOOSTED_TOP_SEQUENCES] [--gradient_boosted_steps GRADIENT_BOOSTED_STEPS] [--gradient_boosted_step_size GRADIENT_BOOSTED_STEP_SIZE] [--faspr_path FASPR_PATH] [--obabel_path OBABEL_PATH] [--batch_size BATCH_SIZE] [--num_cpus NUM_CPUS]
+                       [--save_top_n SAVE_TOP_N] [--calc_seqs_only] [--overwrite]
 
-Run the RASSCCoL pipeline for generating binding pocket sequences and initial evaluation with Vina.
+Run RASSCCoL with optional gradient boosting.
 
 optional arguments:
   -h, --help            show this help message and exit
-  -o OUTPUT_DIRECTORY, --output_directory OUTPUT_DIRECTORY
-                        Output directory for results (required)
-  -r RECEPTOR_PDB_PATH, --receptor_pdb_path RECEPTOR_PDB_PATH
-                        Path to the receptor PDB file (required)
-  -l LIGAND_PDBQT_PATH, --ligand_pdbqt_path LIGAND_PDBQT_PATH
-                        Path to the ligand PDBQT file (required)
-  -d DESIGN_CONFIG_JSON_PATH, --design_config_json_path DESIGN_CONFIG_JSON_PATH
-                        Path to the design configuration JSON file (required)
-  -g, --use_gradient_boosted_trees
-                        Use gradient boosted trees (default: False)
-  -f FASPR_PATH, --faspr_path FASPR_PATH
-                        Path to the FASPR executable (default: /opt/FASPR/FASPR)
-  -b OBABEL_PATH, --obabel_path OBABEL_PATH
-                        Path to the Open Babel executable (default: /usr/bin/obabel)
-  -n NUM_CPUS, --num_cpus NUM_CPUS
-                        Number of CPUs to use (default: 8)
-  -s SAVE_TOP_N, --save_top_n SAVE_TOP_N
-                        Save top N results (default: 3)
-  -c, --calc_seqs_only  Calculate sequences only (default: False)
-  -t TIMEOUT, --timeout TIMEOUT
-                        Timeout duration in seconds (default: 180)
+  --output_directory OUTPUT_DIRECTORY
+                        Output directory for results.
+  --receptor_pdb_path RECEPTOR_PDB_PATH
+                        Path to the receptor PDB file.
+  --ligand_smiles LIGAND_SMILES
+                        Ligand SMILES string.
+  --design_info_path DESIGN_INFO_PATH
+                        Path to the design info file.
+  --ligand_name LIGAND_NAME
+                        Name for the ligand (default: ligand).
+  --ligand_3letter LIGAND_3LETTER
+                        3-letter code for the ligand (default: LIG).
+  --use_gradient_boosted_trees
+                        Use gradient boosted trees for scoring.
+  --gradient_boosted_top_sequences GRADIENT_BOOSTED_TOP_SEQUENCES
+                        Number of top sequences to keep.
+  --gradient_boosted_steps GRADIENT_BOOSTED_STEPS
+                        Number of boosting steps.
+  --gradient_boosted_step_size GRADIENT_BOOSTED_STEP_SIZE
+                        Number of sequences per boosting step.
+  --faspr_path FASPR_PATH
+                        Path to FASPR binary.
+  --obabel_path OBABEL_PATH
+                        Path to Open Babel binary.
+  --batch_size BATCH_SIZE
+                        Batch size for processing.
+  --num_cpus NUM_CPUS   Number of CPU threads to use.
+  --save_top_n SAVE_TOP_N
+                        Number of top-scoring docking PBDQT files to save.
+  --calc_seqs_only      Only calculate sequences, skip docking.
+  --overwrite           Allow overwriting existing outputs.
 ```
