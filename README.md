@@ -26,7 +26,7 @@ The minimum required options are:
 3. Design info TXT path (`--design_info_path`)
 4. Directory to save the output (`--output_directory`)
 
-First I suggest you run the examples to test installation, navigate to the RASSCCoL directory (where this README is located) and run the commands below.
+First, I suggest you run the examples to test installation, navigate to the RASSCCoL directory (where this README is located) and run the commands below.
 
 No random forest active sampling test (~ 2 minutes):
 
@@ -42,11 +42,9 @@ bash helper_scripts/run_RF_test.sh
 
 There are several options you can manipulate for RASSCCoL, see [Running options](#running-options).
 
-For help setting up the ligand and the design configuration, see `./notebooks/01_RASSCCoL_ligand_prep.ipynb` and `./notebooks/02_RASSCCoL_design_prep.ipynb` respectively.
-
 ## Design info
 
-RASSCCoL split proteins/ligands up into layers to match shape. In order to do this the designer needs to pick out layers in their protein. This information is passed as a text file. An example is shown below:
+RASSCCoL splits proteins/ligands up into layers to match shape. In order to do this the designer needs to pick out layers in their protein. This information is passed as a text file. An example is shown below:
 
 ```text
     1 0 20 110
@@ -138,7 +136,7 @@ optional arguments:
                         Batch size for processing.
   --num_cpus NUM_CPUS   Number of CPU threads to use.
   --save_top_n SAVE_TOP_N
-                        Number of top-scoring docking PBDQT files to save.
+                        Number of top-scoring docking PDBQT files to save.
   --calc_seqs_only      Only calculate sequences, skip docking.
   --overwrite           Allow overwriting existing outputs.
 ```
