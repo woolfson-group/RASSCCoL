@@ -6,8 +6,6 @@ from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
-import tensorflow as tf
-import tensorflow_decision_forests as tfdf
 
 sys.path.append("../rasscol_src")
 
@@ -61,7 +59,7 @@ class RASSCCoL:
                     writer.writerow(res)
                     
 
-    def batched_jobs(self, ids, seqs, config, cleanup=True):
+    def batched_jobs(self, ids, seqs, config, cleanup=True, save_to_csv=True):
 
         total = ids.shape[0]
     
@@ -86,17 +84,20 @@ class RASSCCoL:
                 nested_results = pool.map(self.run_docking_job_star, args)
 
             # flatten and write to CSV
-            all_results = [r for batch in nested_results for r in batch]
-            self.write_chunk_csv_append(all_results, output_dir)
+            if save_to_csv:
+                all_results = [r for batch in nested_results for r in batch]
+                self.write_chunk_csv_append(all_results, output_dir)
 
-            print(f"\nCompleted batch {i // batch_size + 1}, wrote {len(all_results)} results.\n")
-        
-        # Delete the pdb output directory
-        if cleanup:
-            (Path(config["output_directory"]) / 'out').rmdir()
+                print(f"\nCompleted batch {i // batch_size + 1}, wrote {len(all_results)} results.\n")
+                
+            else:
+                print(f"\nCompleted batch {i // batch_size + 1}.\n")
 
 
     def run_active_sampling(self, seqs, config, stopping_patience = None, verbose = 0):
+        
+        import tensorflow as tf
+        import tensorflow_decision_forests as tfdf
         
         output_dir = Path(config["output_directory"])
         output_dir.mkdir(parents=True, exist_ok=True)

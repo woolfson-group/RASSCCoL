@@ -21,6 +21,8 @@ def parse_args():
     parser.add_argument("--receptor_pdb_path", type=Path, required=True, help="Path to the receptor PDB file.")
     parser.add_argument("--ligand_smiles", type=str, required=True, help="Ligand SMILES string.")
     parser.add_argument("--design_info_path", type=Path, required=True, help="Path to the design info file.")
+    parser.add_argument("--faspr_path", type=Path, required=True, help="Path to FASPR binary.")
+    parser.add_argument("--obabel_path", type=Path, required=True, help="Path to Open Babel binary.")
 
     # Optional
     parser.add_argument("--ligand_name", type=str, default="ligand", help="Name for the ligand (default: ligand).")
@@ -30,9 +32,6 @@ def parse_args():
     parser.add_argument("--gradient_boosted_top_sequences", type=int, default=100, help="Number of top sequences to keep.")
     parser.add_argument("--gradient_boosted_steps", type=int, default=2, help="Number of boosting steps.")
     parser.add_argument("--gradient_boosted_step_size", type=int, default=250, help="Number of sequences per boosting step.")
-
-    parser.add_argument("--faspr_path", type=Path, default=Path('/opt/FASPR/FASPR'), help="Path to FASPR binary.")
-    parser.add_argument("--obabel_path", type=Path, default=Path('/usr/bin/obabel'), help="Path to Open Babel binary.")
 
     parser.add_argument("--batch_size", type=int, default=1000, help="Batch size for processing.")
     parser.add_argument("--num_cpus", type=int, default=4, help="Number of CPU threads to use.")
@@ -68,7 +67,9 @@ def main():
 
     # Ligand prep ----------------------------------------------------------------
     
-    ligand_builder = LigandBuilder(output_dir=input_dir, bondi_volumes=BONDI_VOLUMES)
+    print("Preparing ligand...")
+    
+    ligand_builder = LigandBuilder(output_dir=input_dir, bondi_volumes=BONDI_VOLUMES, obabel_path=args.obabel_path)
     
     if not ligand_pdbqt_path.exists():
 
@@ -83,12 +84,16 @@ def main():
     lig_info = ligand_builder.analyze_ligand(ligand_pdbqt_path)
 
     # Design info ----------------------------------------------------------------
+    
+    print("Parsing design info...")
 
     design_info = parse_design_info(args.design_info_path)
 
     # Sequence prep --------------------------------------------------------------
 
     if not sequence_npz_path.exists():
+        
+        print("Generating sequences...")
         
         # create sequence library
         sequence_builder = SequenceBuilder(aa_encoder=AA_ENCODER, aa_volumes=AA_VOLUMES)
@@ -101,8 +106,10 @@ def main():
             ) for layer in design_info
         }
 
-        full_ids, full_seqs, full_vols, _ = sequence_builder.generate_sequences_and_volumes(seqs)
+        full_ids, full_seqs, full_vols, num_seqs = sequence_builder.generate_sequences_and_volumes(seqs)
         np.savez(sequence_npz_path, ids=full_ids, sequences=full_seqs, volumes=full_vols)
+        
+        print(f"Generated {num_seqs} sequences.")
 
     # Config prep -----------------------------------------------------------------
 
@@ -179,7 +186,7 @@ def main():
             final_df = pd.read_csv(job_dir / 'docking_results.csv').drop_duplicates(subset='id')
             final_df = final_df.sort_values(by='vina_score_norm')
             top_n = final_df.head(config['save_top_n'])["id"].values
-            rassccol.batched_jobs(top_n, seqs, config, False)
+            rassccol.batched_jobs(top_n, seqs, config, cleanup=False, save_to_csv=False)
             
     else:
         print(f'{docking_results_path} already exists! Pass `overwrite` true to overwrite.')

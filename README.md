@@ -15,7 +15,11 @@ conda env create -f env/RASSCCoL_env.yml
 conda activate RASSCCoL_env
 ```
 
-To prepare files for AutoDock Vina, Open Babel is needed. [See here for installation](https://openbabel.org/docs/Installation/install.html#install-binaries)
+* To prepare files for AutoDock Vina, Open Babel is needed. [See here for installation](https://openbabel.org/docs/Installation/install.html#install-binaries)
+
+* For fast repacking of sequences, FASPR is needed. [See here for installation](https://github.com/tommyhuangthu/FASPR?tab=readme-ov-file#installation)
+
+> Both of these executables will need to be specified in the CLI when running.
 
 ## Running
 
@@ -25,10 +29,14 @@ The minimum required options are:
 2. Ligand SMILES string (`--ligand_smiles`)
 3. Design info TXT path (`--design_info_path`)
 4. Directory to save the output (`--output_directory`)
+5. FASPR binary path (`--faspr_path`)
+6. OpenBabel binary path (`--obabel_path`)
 
-First, I suggest you run the examples to test installation, navigate to the RASSCCoL directory (where this README is located) and run the commands below.
+First I suggest you run the examples to test installation, navigate to the RASSCCoL directory (where this README is located) and run the commands below.
 
-No random forest active sampling test (~ 2 minutes):
+> You will need to manually overide the `faspr_path` and `obabel_path` arguments.
+
+No random forest active sampling test (~  2 minutes):
 
 ```bash
 bash helper_scripts/run_no_RF_test.sh
@@ -39,7 +47,6 @@ Random forest active sampling test (~ 15 minutes):
 ```bash
 bash helper_scripts/run_RF_test.sh
 ```
-
 There are several options you can manipulate for RASSCCoL, see [Running options](#running-options).
 
 ## Design info
@@ -91,13 +98,14 @@ Layers can be bypassed by simply putting all of the intended pocket residues int
     51 AILV
     118 AILV
 ```
+
 ## Known limitations
 
 - Currently the code only works on monomeric proteins.
 
 ### Running options
 
-For see below for full list, or use `python run_RASSCCoL.py -h`.
+For see below for full list, or use `python run_RASSCCoL.py - h`.
 
 ```text
 usage: run_RASSCCoL.py [-h] --output_directory OUTPUT_DIRECTORY --receptor_pdb_path RECEPTOR_PDB_PATH --ligand_smiles LIGAND_SMILES --design_info_path DESIGN_INFO_PATH [--ligand_name LIGAND_NAME] [--ligand_3letter LIGAND_3LETTER] [--use_gradient_boosted_trees]
@@ -136,7 +144,7 @@ optional arguments:
                         Batch size for processing.
   --num_cpus NUM_CPUS   Number of CPU threads to use.
   --save_top_n SAVE_TOP_N
-                        Number of top-scoring docking PDBQT files to save.
+                        Number of top-scoring docking PBDQT files to save.
   --calc_seqs_only      Only calculate sequences, skip docking.
   --overwrite           Allow overwriting existing outputs.
 ```

@@ -4,5 +4,7 @@ python ./run_RASSCCoL.py \
     --receptor_pdb_path example/resources/scapCC4.pdb \
     --ligand_smiles "CCN(CC)C1=CC2=C(C=C1)N=C3C4=CC=CC=C4C(=O)C=C3O2" \
     --design_info_path example/resources/RF_desing_info.txt \
+    --faspr_path /opt/FASPR/FASPR \
+    --obabel_path /usr/bin/obabel \
     --use_gradient_boosted_trees \
     --overwrite

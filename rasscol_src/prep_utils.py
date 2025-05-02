@@ -66,7 +66,7 @@ class LigandBuilder:
         self,
         output_dir: Path,
         bondi_volumes: dict,
-        obabel_path: Path = Path("/usr/bin/obabel"),
+        obabel_path: Path,
     ):
         self.output_dir = Path(output_dir)
         self.bondi_volumes = bondi_volumes
