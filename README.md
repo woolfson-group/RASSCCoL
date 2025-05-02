@@ -28,7 +28,7 @@ The minimum required options are:
 
 First I suggest you run the examples to test installation, navigate to the RASSCCoL directory (where this README is located) and run the commands below.
 
-No random forest active sampling test (~  2 minutes):
+No random forest active sampling test (~ 2 minutes):
 
 ```bash
 bash helper_scripts/run_no_RF_test.sh
@@ -99,7 +99,7 @@ Layers can be bypassed by simply putting all of the intended pocket residues int
 
 ### Running options
 
-For see below for full list, or use `python run_RASSCCoL.py - h`.
+For see below for full list, or use `python run_RASSCCoL.py -h`.
 
 ```text
 usage: run_RASSCCoL.py [-h] --output_directory OUTPUT_DIRECTORY --receptor_pdb_path RECEPTOR_PDB_PATH --ligand_smiles LIGAND_SMILES --design_info_path DESIGN_INFO_PATH [--ligand_name LIGAND_NAME] [--ligand_3letter LIGAND_3LETTER] [--use_gradient_boosted_trees]
