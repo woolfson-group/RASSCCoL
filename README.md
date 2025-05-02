@@ -15,9 +15,9 @@ conda env create -f env/RASSCCoL_env.yml
 conda activate RASSCCoL_env
 ```
 
-* To prepare files for AutoDock Vina, Open Babel is needed. [See here for installation](https://openbabel.org/docs/Installation/install.html#install-binaries)
+- To prepare files for AutoDock Vina, Open Babel is needed. [See here for installation](https://openbabel.org/docs/Installation/install.html#install-binaries)
 
-* For fast repacking of sequences, FASPR is needed. [See here for installation](https://github.com/tommyhuangthu/FASPR?tab=readme-ov-file#installation)
+- For fast repacking of sequences, FASPR is needed. [See here for installation](https://github.com/tommyhuangthu/FASPR?tab=readme-ov-file#installation)
 
 > Both of these executables will need to be specified in the CLI when running.
 
@@ -47,6 +47,7 @@ Random forest active sampling test (~ 15 minutes):
 ```bash
 bash helper_scripts/run_RF_test.sh
 ```
+
 There are several options you can manipulate for RASSCCoL, see [Running options](#running-options).
 
 ## Design info
@@ -108,9 +109,8 @@ Layers can be bypassed by simply putting all of the intended pocket residues int
 For see below for full list, or use `python run_RASSCCoL.py - h`.
 
 ```text
-usage: run_RASSCCoL.py [-h] --output_directory OUTPUT_DIRECTORY --receptor_pdb_path RECEPTOR_PDB_PATH --ligand_smiles LIGAND_SMILES --design_info_path DESIGN_INFO_PATH [--ligand_name LIGAND_NAME] [--ligand_3letter LIGAND_3LETTER] [--use_gradient_boosted_trees]
-                       [--gradient_boosted_top_sequences GRADIENT_BOOSTED_TOP_SEQUENCES] [--gradient_boosted_steps GRADIENT_BOOSTED_STEPS] [--gradient_boosted_step_size GRADIENT_BOOSTED_STEP_SIZE] [--faspr_path FASPR_PATH] [--obabel_path OBABEL_PATH] [--batch_size BATCH_SIZE] [--num_cpus NUM_CPUS]
-                       [--save_top_n SAVE_TOP_N] [--calc_seqs_only] [--overwrite]
+usage: run_RASSCCoL.py [-h] --output_directory OUTPUT_DIRECTORY --receptor_pdb_path RECEPTOR_PDB_PATH --ligand_smiles LIGAND_SMILES --design_info_path DESIGN_INFO_PATH --faspr_path FASPR_PATH --obabel_path OBABEL_PATH [--ligand_name LIGAND_NAME] [--ligand_3letter LIGAND_3LETTER] [--use_gradient_boosted_trees]
+                       [--gradient_boosted_top_sequences GRADIENT_BOOSTED_TOP_SEQUENCES] [--gradient_boosted_steps GRADIENT_BOOSTED_STEPS] [--gradient_boosted_step_size GRADIENT_BOOSTED_STEP_SIZE] [--batch_size BATCH_SIZE] [--num_cpus NUM_CPUS] [--save_top_n SAVE_TOP_N] [--calc_seqs_only] [--overwrite]
 
 Run RASSCCoL with optional gradient boosting.
 
@@ -124,6 +124,10 @@ optional arguments:
                         Ligand SMILES string.
   --design_info_path DESIGN_INFO_PATH
                         Path to the design info file.
+  --faspr_path FASPR_PATH
+                        Path to FASPR binary.
+  --obabel_path OBABEL_PATH
+                        Path to Open Babel binary.
   --ligand_name LIGAND_NAME
                         Name for the ligand (default: ligand).
   --ligand_3letter LIGAND_3LETTER
@@ -136,15 +140,11 @@ optional arguments:
                         Number of boosting steps.
   --gradient_boosted_step_size GRADIENT_BOOSTED_STEP_SIZE
                         Number of sequences per boosting step.
-  --faspr_path FASPR_PATH
-                        Path to FASPR binary.
-  --obabel_path OBABEL_PATH
-                        Path to Open Babel binary.
   --batch_size BATCH_SIZE
                         Batch size for processing.
   --num_cpus NUM_CPUS   Number of CPU threads to use.
   --save_top_n SAVE_TOP_N
-                        Number of top-scoring docking PBDQT files to save.
+                        Number of top-scoring sequences to save.
   --calc_seqs_only      Only calculate sequences, skip docking.
   --overwrite           Allow overwriting existing outputs.
 ```
