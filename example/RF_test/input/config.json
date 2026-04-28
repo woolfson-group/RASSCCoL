@@ -1,0 +1,61 @@
+{
+    "receptor_path": "example/resources/scapCC4.pdb",
+    "ligand_path": "example/RF_test/input/ligand.pdbqt",
+    "sequences_path": "example/RF_test/input/sequences.npz",
+    "output_directory": "example/RF_test",
+    "FASPR_path": "/opt/FASPR/FASPR",
+    "obabel_path": "/usr/bin/obabel",
+    "num_cpus": 24,
+    "batch_size": 1000,
+    "use_gradient_boosted_trees": true,
+    "gradient_boosted_top_sequences": 100,
+    "gradient_boosted_steps": 2,
+    "save_top_n": 3,
+    "datestamp": "2026-04-28",
+    "timestamp": "10-21-54",
+    "calc_seqs_only": false,
+    "cube_side_length": [
+        17.205000000000002,
+        17.205000000000002,
+        17.205000000000002
+    ],
+    "design_idx": [
+        19,
+        44,
+        111,
+        16,
+        84,
+        114,
+        12,
+        51,
+        118
+    ],
+    "starting_seq": "qleeiaqqleeiakqlkkiawqlkkiaqgepsaqgqleeiaqqleeiakqlkkiawqlkkiaqgpdsvqleeiaqqleeiakqlkkiawqlkkiaqggtsggqleeiaqqleeiakqlkkiawqlkkiaq",
+    "gradient_boosted_step_size": 250,
+    "pocket_ca_centroid": [
+        -0.6337777777777778,
+        0.2112222222222225,
+        1.1852222222222224
+    ],
+    "num_lig_atoms": 24,
+    "parent_volume": 621,
+    "total_ligand_volume": 330.0,
+    "design": {
+        "1": {
+            "res_info": {
+                "19": "GAVIL",
+                "44": "GAVIL",
+                "111": "GAVIL",
+                "16": "GAVIL",
+                "84": "GAVIL",
+                "114": "GAVIL",
+                "12": "GAVIL",
+                "51": "GAVIL",
+                "118": "GAVIL"
+            },
+            "cavity": 0.0,
+            "tolerance": 20.0,
+            "target": 330.0
+        }
+    }
+}

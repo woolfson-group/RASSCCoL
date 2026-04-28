@@ -8,7 +8,7 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdmolfiles
 
-from general_utils import get_centroid, get_mol_len, get_pdbqt_coords
+from rasscol_src.general_utils import get_centroid, get_mol_len, get_pdbqt_coords
 
 # ------------------------------------- Design info ------------------------------------- #
 

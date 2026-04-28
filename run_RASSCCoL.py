@@ -8,10 +8,10 @@ import pandas as pd
 
 sys.path.append("rasscol_src")
 
-from rasscol_utils import RASSCCoL
-from data_utils import BONDI_VOLUMES, AA_ENCODER, AA_VOLUMES
-from prep_utils import parse_design_info, LigandBuilder, SequenceBuilder
-from general_utils import get_timestamp, pdb2seq, get_pdbqt_coords, get_centroid
+from rasscol_src.rasscol_utils import RASSCCoL
+from rasscol_src.data_utils import BONDI_VOLUMES, AA_ENCODER, AA_VOLUMES
+from rasscol_src.prep_utils import parse_design_info, LigandBuilder, SequenceBuilder
+from rasscol_src.general_utils import get_timestamp, pdb2seq, get_pdbqt_coords, get_centroid
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run RASSCCoL with optional gradient boosting.")
@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--gradient_boosted_step_size", type=int, default=250, help="Number of sequences per boosting step.")
 
     parser.add_argument("--batch_size", type=int, default=1000, help="Batch size for processing.")
-    parser.add_argument("--num_cpus", type=int, default=4, help="Number of CPU threads to use.")
+    parser.add_argument("--num_cpus", type=int, default=24, help="Number of CPU threads to use.")
     parser.add_argument("--save_top_n", type=int, default=3, help="Number of top-scoring sequences to save.")
     parser.add_argument("--calc_seqs_only", action="store_true", help="Only calculate sequences, skip docking.")
     parser.add_argument("--overwrite", action="store_true", help="Allow overwriting existing outputs.")

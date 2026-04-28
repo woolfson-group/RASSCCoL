@@ -7,9 +7,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 
-sys.path.append("../rasscol_src")
-
-from vina_utils import VinaJob
+from rasscol_src.vina_utils import VinaJob
 
 class RASSCCoL:
 
@@ -94,173 +92,354 @@ class RASSCCoL:
                 print(f"\nCompleted batch {i // batch_size + 1}.\n")
 
 
-    def run_active_sampling(self, seqs, config, stopping_patience = None, verbose = 0):
-        
-        import tensorflow as tf
-        import tensorflow_decision_forests as tfdf
-        
+    def run_active_sampling(self, seqs, config, verbose=0):
+
+        import lightgbm as lgb
+        from scipy.stats import spearmanr
+        from sklearn.preprocessing import OrdinalEncoder
+
         output_dir = Path(config["output_directory"])
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        num_cpus = config['num_cpus']
-        final_num_designs = config['gradient_boosted_top_sequences']
-        steps = config['gradient_boosted_steps']
-        step_size = config['gradient_boosted_step_size']
+        step_size = config["gradient_boosted_step_size"]
+        steps = config["gradient_boosted_steps"]
+        final_num_designs = config["gradient_boosted_top_sequences"]
+        num_cpus = config["num_cpus"]
 
-        N = len(seqs["sequences"])
-        docking = np.zeros(N)
+        seed = config.get("seed", 42)
+        rng = np.random.default_rng(seed)
 
-        seed = 42
-        np.random.seed(seed)
+        test_size = 5 * step_size
+        val_size = 5 * step_size
+        pool_multiplier = 100
+        min_delta =  5e-4
+        stopping_patience = config.get("stopping_patience", 5)
 
-        shuffled_ids = np.random.permutation(seqs["ids"])
+        eps = 1e-6
 
-        # shuffled_ids should be a list of unique indices 
-        step_ids = shuffled_ids[:step_size]
+        # ------------------------- helper functions -------------------------
 
-        # ---------------------- Run initial data set ---------------------- #
+        def vina_to_target(vina_scores):
+            """
+            Convert docking scores to target where higher == better.
+            Assumes vina_score values are negative.
+            """
+            vina_scores = np.asarray(vina_scores, dtype=float)
+            affinity = np.clip(-vina_scores, eps, None)
+            return np.log(affinity)
 
-        self.batched_jobs(step_ids, seqs, config)
+        def spearman_metric(y_true, y_pred):
+            corr = spearmanr(y_true, y_pred).correlation
+            if np.isnan(corr):
+                corr = 0.0
+            return "spearman", corr, True
 
-        # load results
-        results_df = pd.read_csv(output_dir / 'docking_results.csv').drop_duplicates(subset='id')
+        def top5_recall(y_true, y_pred, k=0.01):
+            """
+            Recall@5%, assuming higher values are better.
+            """
+            n = len(y_true)
+            top_n_5 = max(1, int(n * k * 5))
 
-        docking[step_ids] = results_df['vina_score'].values
+            true_top_5 = np.argsort(-y_true)[:top_n_5]
+            pred_top_5 = np.argsort(-y_pred)[:top_n_5]
 
-        df_rf = pd.DataFrame(seqs['sequences'], columns=[f's{i}' for i in range(seqs['sequences'].shape[1])])
-        df_rf['Docking'] = docking
-        train_index = shuffled_ids[:round(step_size*0.8)]
-        mse_index = shuffled_ids[round(step_size*0.8):step_size]
-        
-        num_models = 10  # Number of models to train in the ensemble
+            return len(set(true_top_5) & set(pred_top_5)) / top_n_5
 
-        # ------------------------- Warnings and Initialization -------------------------
+        def mean_and_uncertainty(lgb_model, X):
+            alpha = 0.5
+            total_iterations = lgb_model.booster_.current_iteration()
 
-        mse_list = []
+            preds = []
+            for _ in range(10):
+                pred = lgb_model.booster_.shuffle_models().predict(
+                    X,
+                    num_iteration=int(alpha * total_iterations)
+                )
+                preds.append(pred)
 
-        # Set up logging 
-        sampling_log_file = Path(config['output_directory']) / 'RASSCoL_sampling.log'
-        open_sampling_log = open(sampling_log_file, 'w')
+            preds = np.stack(preds)
+            mu = preds.mean(axis=0)
+            sigma = preds.std(axis=0)
 
-        if stopping_patience is None:
-            warnings.warn('stopping_patience=None, no validation set will be merged with the training set')
+            return mu, sigma
 
-        # ------------------------- Main Loop -------------------------
+        def load_docking_results_into_df(df):
+            results_file = output_dir / "docking_results.csv"
+            if not results_file.exists():
+                return df
 
+            results_df = (
+                pd.read_csv(results_file)
+                .drop_duplicates(subset="id", keep="last")
+            )
 
-        for i in range(steps):
-            print(f'\nStarting Step {i + 1}/{steps}')
+            id_to_score = dict(zip(results_df["id"], results_df["vina_score"]))
+            matched = df["id"].isin(id_to_score)
 
-            # Prepare training and test datasets
-            df_train = df_rf.loc[train_index]
-            df_mse = df_rf.loc[mse_index]
-            
-            df_test = df_rf.drop(np.concatenate((train_index, mse_index)))
-            
-            # Drop the "Predictions" column if it exists
-            features = [col for col in df_train.columns if col not in ['Docking', 'Predictions', 'Predictions_std']]
+            df.loc[matched, "vina_score"] = df.loc[matched, "id"].map(id_to_score)
+            df.loc[matched, "target"] = vina_to_target(
+                df.loc[matched, "vina_score"].values
+            )
 
-            # Convert data to TensorFlow datasets
-            train_ds = tfdf.keras.pd_dataframe_to_tf_dataset(df_train[features + ['Docking']], label='Docking', task=tfdf.keras.Task.REGRESSION)
-            test_ds = tfdf.keras.pd_dataframe_to_tf_dataset(df_test[features + ['Docking']], label='Docking', task=tfdf.keras.Task.REGRESSION)
-            mse_ds = tfdf.keras.pd_dataframe_to_tf_dataset(df_mse[features + ['Docking']], label='Docking', task=tfdf.keras.Task.REGRESSION)
+            return df
 
-            # ------------------------- Model Training -------------------------
+        # ------------------------- dataframe -------------------------
 
-            print('Training Gradient Boosted Trees models...')
-            tuner = tfdf.tuner.RandomSearch(num_trials=20, use_predefined_hps=True)
-            models = []
-            
-            from concurrent.futures import ThreadPoolExecutor
+        df = pd.DataFrame({
+            "id": seqs["ids"],
+            "pocket_seq": list(seqs["sequences"]),
+            "cavity_vol": seqs["volumes"],
+        })
 
-            def train_model(seed):
-                model = tfdf.keras.GradientBoostedTreesModel(tuner=tuner, task=tfdf.keras.Task.REGRESSION, random_seed=seed, verbose=verbose)
-                model.fit(train_ds)
-                return model
+        df["vina_score"] = np.nan
+        df["target"] = np.nan
 
-            with ThreadPoolExecutor(max_workers=num_cpus) as executor:
-                models = list(executor.map(train_model, range(num_models)))
+        # ------------------------- global categorical encoding -------------------------
 
-            print(f'{num_models} models trained successfully.')
+        pos_cols = [list(seq) for seq in df["pocket_seq"]]
 
-            # ------------------------- Combine Models for Ensemble -------------------------
+        encoder = OrdinalEncoder(
+            dtype=int,
+            handle_unknown="use_encoded_value",
+            unknown_value=-1,
+        )
 
-            class CombinedModel(tf.keras.Model):
-                        """Ensemble model combining predictions from multiple Gradient Boosted Trees models."""
-                        def call(self, inputs):
-                            predictions = tf.concat([submodel(inputs) for submodel in models], axis=1)
-                            return tf.math.reduce_mean(predictions, axis=1), tf.math.reduce_std(predictions, axis=1)
+        X_seq = encoder.fit_transform(pos_cols)
+        X_full = np.hstack([
+            X_seq,
+            df["cavity_vol"].values.reshape(-1, 1)
+        ])
 
-            combined_model = CombinedModel()
-            train_predictions, _ = combined_model.predict(train_ds)
+        seq_len = X_seq.shape[1]
+        categorical_features = list(range(seq_len))
 
-            # ------------------------- Evaluate on MSE Dataset -------------------------
+        N = X_full.shape[0]
 
-            mse_predictions_scaled, mse_predictions_std = combined_model.predict(mse_ds)
-            mse = np.mean(np.square(mse_predictions_scaled - df_mse['Docking'].values))
+        if N < test_size + val_size + step_size:
+            raise ValueError(
+                f"Dataset too small. Need at least {test_size + val_size + step_size} "
+                f"sequences for test, validation, and initial sampling."
+            )
 
-            mse_list.append(mse)
-            open_sampling_log.write(f'Step {i + 1} validation MSE: {mse:.4f}')
+        all_idx = rng.permutation(N)
 
-            # Check for early stopping
-            if stopping_patience is not None:
+        test_idx = all_idx[:test_size]
+        val_idx = all_idx[test_size:test_size + val_size]
+        pool_idx = all_idx[test_size + val_size:]
 
-                if i >= stopping_patience and all(x > mse for x in mse_list[-stopping_patience:]):
-                    print(f'Stopping early after {i + 1} steps due to no improvement in MSE.')
-                    break
-                
-            # ------------------------- Active Sampling -------------------------
-            
-            test_predictions_scaled, prediction_std = combined_model.predict(test_ds)
+        # ------------------------- dock test + validation -------------------------
 
-            # Save predictions
-            df_test['Predictions'] = test_predictions_scaled
-            df_test['Predictions_std'] = prediction_std
+        heldout_idx = np.concatenate([test_idx, val_idx])
 
-            # Select samples for the next round
-            worst_index = df_test.nlargest(round(step_size * 0.25), 'Predictions_std').index  # High uncertainty
-            best_index = df_test.nsmallest(round(step_size * 0.25), 'Predictions').index  # Best docking scores
+        print(f"Docking held-out test/validation set: {len(heldout_idx)} sequences")
+        self.batched_jobs(heldout_idx, seqs, config)
+        df = load_docking_results_into_df(df)
 
-            # Combine worst and best indices, ensuring no duplicates
-            combined_index = worst_index.union(best_index)
+        if df.loc[test_idx, "target"].isna().any():
+            raise RuntimeError("Missing docking results for test set.")
 
-            # Exclude indices already in combined_index to avoid duplicates
-            allowed_sample_space = df_test.index.difference(combined_index)
+        if df.loc[val_idx, "target"].isna().any():
+            raise RuntimeError("Missing docking results for validation set.")
 
-            # Randomly sample from the allowed sample space, sometime best and least certain data points overlap - random fraction needs to be adjusted
-            random_index = allowed_sample_space.to_series().sample(n=round(step_size-len(combined_index)), random_state=seed).index
+        X_test = X_full[test_idx]
+        y_test = df.loc[test_idx, "target"].values
 
-            # Final combined index with worst, best, and random samples
-            final_combined_index  = pd.Index(combined_index).union(random_index)
-            #sanity check final_combined_index = new_test_index
-            new_test_index = np.array(final_combined_index.difference(results_df.index))
-            print(len(final_combined_index),len(new_test_index))
+        X_val = X_full[val_idx]
+        y_val = df.loc[val_idx, "target"].values
 
-            # ------------------------- Dock New Samples -------------------------
+        # ------------------------- initial active sample -------------------------
 
-            print(f'Docking {len(new_test_index)} new samples...')
-            self.batched_jobs(new_test_index, seqs, config)
-            
-            results_df = pd.read_csv(output_dir / 'docking_results.csv').drop_duplicates(subset='id')
+        sampled_mask = np.zeros(len(pool_idx), dtype=bool)
 
-            docking[new_test_index] = results_df.query("id in @new_test_index")['vina_score'].values
-            df_rf.loc[new_test_index, 'Docking'] = docking[new_test_index]
+        initial_rel = rng.choice(len(pool_idx), size=step_size, replace=False)
+        sampled_mask[initial_rel] = True
 
-            train_index = np.union1d(train_index, new_test_index)
-            
-        # ----------------------------- Dock Best predictions -----------------------
+        initial_idx = pool_idx[initial_rel]
 
-        # prevent redocking already sampled sequences
-        best_index = df_test.nsmallest(final_num_designs, 'Predictions').index
-        self.batched_jobs(best_index, seqs, config)
-        
-        df_test.to_csv(Path(config['output_directory']) / 'RASSCoL_DF_test.csv')
+        print(f"Docking initial active-sampling set: {len(initial_idx)} sequences")
+        self.batched_jobs(initial_idx, seqs, config)
+        df = load_docking_results_into_df(df)
 
-        df_mse['Predictions'] = mse_predictions_scaled
-        df_mse['Predictions_std'] = mse_predictions_std
-        df_mse.to_csv(Path(config['output_directory']) / 'RASSCoL_DF_validate.csv')
+        # ------------------------- logging -------------------------
 
-        open_sampling_log.close()
+        log_file = output_dir / "RASSCoL_sampling.log"
+        log_f = open(log_file, "w")
 
-        print('\nActive learning process completed.')
+        history = []
+        best_recall5 = -np.inf
+        patience_counter = 0
+        final_model = None
+
+        # ------------------------- main loop -------------------------
+
+        for step in range(steps):
+            print(f"\nStep {step + 1}/{steps}")
+
+            sampled_rel = np.flatnonzero(sampled_mask)
+            sampled_abs = pool_idx[sampled_rel]
+
+            if df.loc[sampled_abs, "target"].isna().any():
+                raise RuntimeError("Some sampled sequences are missing docking results.")
+
+            X_train = X_full[sampled_abs]
+            y_train = df.loc[sampled_abs, "target"].values
+
+            model = lgb.LGBMRegressor(
+                boosting_type="gbdt",
+                n_estimators=1000,
+                num_leaves=96,
+                max_bin=63,
+                bagging_fraction=0.8,
+                bagging_freq=1,
+                feature_fraction=0.9,
+                n_jobs=num_cpus,
+                random_state=seed,
+                verbose=verbose,
+            )
+
+            model.fit(
+                X_train,
+                y_train,
+                categorical_feature=categorical_features,
+                eval_set=[(X_val, y_val)],
+                eval_metric=spearman_metric,
+                callbacks=[
+                    lgb.reset_parameter(
+                        learning_rate=lambda i: 0.01 + (0.09 * np.power(0.99, i))
+                    ),
+                    lgb.early_stopping(
+                        stopping_rounds=10,
+                        min_delta=min_delta,
+                        verbose=bool(verbose),
+                    ),
+                ],
+            )
+
+            final_model = model
+
+            # ------------------------- evaluate pipeline on test set -------------------------
+
+            mu_test, _ = mean_and_uncertainty(model, X_test)
+            recall5 = top5_recall(y_test, mu_test)
+
+            train_pred = model.predict(X_train)
+            train_spearman = spearmanr(y_train, train_pred).correlation
+            if np.isnan(train_spearman):
+                train_spearman = 0.0
+
+            num_trees = model.booster_.current_iteration()
+
+            print(
+                f"Train size: {len(sampled_abs)} | "
+                f"Recall@5%: {recall5:.4f} | "
+                f"Train Spearman: {train_spearman:.4f} | "
+                f"Trees: {num_trees}"
+            )
+
+            history.append({
+                "step": step + 1,
+                "sampled": len(sampled_abs),
+                "fraction_sampled": len(sampled_abs) / len(pool_idx),
+                "recall5": recall5,
+                "train_spearman": train_spearman,
+                "num_trees": num_trees,
+            })
+
+            log_f.write(
+                f"Step {step + 1}, "
+                f"sampled={len(sampled_abs)}, "
+                f"fraction_sampled={len(sampled_abs) / len(pool_idx):.6f}, "
+                f"recall5={recall5:.6f}, "
+                f"train_spearman={train_spearman:.6f}, "
+                f"num_trees={num_trees}\n"
+            )
+            log_f.flush()
+
+            # ------------------------- active-sampling early stopping -------------------------
+
+            if recall5 > best_recall5 + 0.01:
+                best_recall5 = recall5
+                patience_counter = 0
+            else:
+                patience_counter += 1
+
+            if stopping_patience is not None and patience_counter >= stopping_patience:
+                print("Stopping active sampling: no improvement in Recall@5%.")
+                break
+
+            # ------------------------- pool-based acquisition -------------------------
+
+            remaining_rel = np.flatnonzero(~sampled_mask)
+
+            if len(remaining_rel) == 0:
+                print("No remaining sequences to sample.")
+                break
+
+            subset_size = min(len(remaining_rel), pool_multiplier * step_size)
+            subset_rel = rng.choice(remaining_rel, size=subset_size, replace=False)
+            subset_abs = pool_idx[subset_rel]
+
+            X_subset = X_full[subset_abs]
+
+            mu, sigma = mean_and_uncertainty(model, X_subset)
+
+            # Higher == better
+            acquisition = mu + sigma
+
+            k = min(step_size, len(subset_rel))
+            selected_local = np.argpartition(-acquisition, k - 1)[:k]
+            selected_rel = subset_rel[selected_local]
+            selected_abs = pool_idx[selected_rel]
+
+            sampled_mask[selected_rel] = True
+
+            print(f"Docking {len(selected_abs)} newly selected sequences")
+            self.batched_jobs(selected_abs, seqs, config)
+            df = load_docking_results_into_df(df)
+
+        # ------------------------- final selection -------------------------
+
+        if final_model is None:
+            raise RuntimeError("No model was trained.")
+
+        print("\nPredicting over full active-sampling pool for final selection")
+
+        X_candidates = X_full[pool_idx]
+        mu_final, sigma_final = mean_and_uncertainty(final_model, X_candidates)
+
+        pred_df = df.loc[
+            pool_idx,
+            ["id", "pocket_seq", "cavity_vol", "vina_score", "target"]
+        ].copy()
+
+        pred_df["prediction"] = mu_final
+        pred_df["prediction_std"] = sigma_final
+
+        pred_df = pred_df.sort_values("prediction", ascending=False)
+
+        best_abs = pred_df.head(final_num_designs).index.values
+
+        not_yet_docked = df.loc[best_abs, "vina_score"].isna()
+        best_to_dock = best_abs[not_yet_docked.values]
+
+        print(f"Docking {len(best_to_dock)} final top-predicted sequences")
+
+        if len(best_to_dock) > 0:
+            self.batched_jobs(best_to_dock, seqs, config)
+            df = load_docking_results_into_df(df)
+
+        # ------------------------- save outputs -------------------------
+
+        history_df = pd.DataFrame(history)
+
+        history_df.to_csv(output_dir / "RASSCoL_sampling_history.csv", index=False)
+        pred_df.to_csv(output_dir / "RASSCoL_predictions.csv", index=True)
+        df.to_csv(output_dir / "RASSCoL_active_sampling_results.csv", index=False)
+
+        log_f.close()
+
+        print("\nActive sampling completed.")
+
+        return df, pred_df, history_df
 

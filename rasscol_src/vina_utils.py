@@ -4,10 +4,8 @@ import time
 import subprocess
 from pathlib import Path
 
-sys.path.append("../rasscol_src")
-
-from data_utils import AA_DECODER
-from general_utils import euclidean_distance, get_pdbqt_coords, get_centroid
+from rasscol_src.data_utils import AA_DECODER
+from rasscol_src.general_utils import euclidean_distance, get_pdbqt_coords, get_centroid
 
 import vina
 
